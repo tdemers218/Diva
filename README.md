@@ -54,6 +54,42 @@ Diva takes the place of the Omarchy menu: its button sits first in the bar and `
 
 Not yet done: voice, a French lock-screen prompt, release-based updates, a fresh-machine install, a French system locale, and any testing on the target laptop.
 
+Prochaine mise à jour — Diva met ses lunettes
+
+Fonctionnalités prévues, à implémenter. Toute l’expérience reste en français.
+
+Fiabilité et dépannage
+
+- Actualiser automatiquement la liste des applications après une installation ou une suppression, même lorsque le menu reste ouvert.
+- Vérifier le résultat des actions avant d’annoncer leur réussite ou d’enregistrer un raccourci appris.
+- Ajouter une compétence de dépannage Diva, chargée explicitement dans les instructions de l’assistante : architecture, problèmes connus, diagnostics et procédures de récupération.
+- Fournir des outils contrôlés pour inspecter l’état, appliquer une réparation et vérifier son résultat, avec un nombre limité de tentatives.
+
+Deux niveaux de réflexion
+
+Les actions locales et raccourcis appris restent prioritaires, sans appel à un modèle.
+
+- Diva quotidienne : Sonnet avec Claude, Luna avec OpenAI.
+- Diva avec lunettes : Opus avec Claude, Sol avec OpenAI.
+
+Le modèle quotidien peut demander une escalade motivée. Le contrôleur peut également la déclencher après un échec vérifié ou pour un dépannage comportant plusieurs étapes. Transmettre au modèle supérieur le contexte et les essais précédents, sans recommencer aveuglément.
+
+Limiter initialement à une escalade par tâche. Le changement de modèle ne change pas les permissions.
+
+Apparence et utilisation de l’écran
+
+En réflexion approfondie, Diva adopte une allure de petite hackeuse : lunettes rondes, expression concentrée et discret terminal rose/violet dans son coin.
+
+Afficher des états réels : « Je vérifie… », « Je m’en occupe… », « Je teste… », puis le résultat. Prévoir un bouton « Arrêter ».
+
+Privilégier les outils en arrière-plan. Si un contrôle de l’écran est indispensable, demander confirmation et suspendre l’opération en cas d’intervention de l’utilisatrice pour éviter les collisions de saisie.
+
+Réparations compatibles avec les mises à jour
+
+Conserver les modifications de réglages et les données hors du dépôt. Journaliser les changements, prévoir leur annulation lorsque possible et préserver les modifications personnelles sans rapport.
+
+Les bugs nécessitant une modification des sources doivent produire un diagnostic pour une correction dans GitHub, distribuée par une mise à jour normale.
+
 ## The goal
 
 Diva is a personalized Omarchy experience being built for my girlfriend: cute, very pink, approachable, and usable by someone who is not familiar with computers.
