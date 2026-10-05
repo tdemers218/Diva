@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# Window moves Diva can make. Each is a fixed Hyprland dispatcher; the only
+# values taken from outside are a window address and a workspace number,
+# both checked.
+#
+#   diva-window focus <0xaddress>         go to that window
+#   diva-window close|fullscreen|maximize|float|split|next|pop
+#   diva-window left|right|up|down        swap with the neighbour
+#   diva-window wider|narrower|taller|shorter [--now]
+#   diva-window to-workspace <1-10>       send the window there
+#   diva-window goto-workspace <1-10>     go there
+#
+# Unless --now is given, it waits a moment first: Diva's menu is closing, and
+# the window she was called from must be the active one again.
+
+set -uo pipefail
+
+op="${1:-}"
+arg="${2:-}"
+
+workspace() { [[ $arg =~ ^([1-9]|10)$ ]]; }
+
+case "$op" in
+focus)
+  [[ $arg =~ ^0x[0-9a-f]{4,16}$ ]] || exit 2
+  expr="hl.dsp.focus({ window = \"address:$arg\" })"
+  ;;
+close) expr='hl.dsp.window.close()' ;;
+fullscreen) expr='hl.dsp.window.fullscreen({ mode = "fullscreen" })' ;;
+maximize) expr='hl.dsp.window.fullscreen({ mode = "maximized" })' ;;
+float) expr='hl.dsp.window.float({ action = "toggle" })' ;;
+split) expr='hl.dsp.layout("togglesplit")' ;;
+next) expr='hl.dsp.window.cycle_next()' ;;
+left | right | up | down) expr="hl.dsp.window.swap({ direction = \"${op:0:1}\" })" ;;
+wider) expr='hl.dsp.window.resize({ x = 120, y = 0, relative = true })' ;;
+narrower) expr='hl.dsp.window.resize({ x = -120, y = 0, relative = true })' ;;
+taller) expr='hl.dsp.window.resize({ x = 0, y = 120, relative = true })' ;;
+shorter) expr='hl.dsp.window.resize({ x = 0, y = -120, relative = true })' ;;
+to-workspace)
+  workspace || exit 2
+  expr="hl.dsp.window.move({ workspace = \"$arg\" })"
+  ;;
+goto-workspace)
+  workspace || exit 2
+  expr="hl.dsp.focus({ workspace = \"$arg\" })"
+  ;;
+pop)
+  sleep 0.18
+  exec omarchy-hyprland-window-pop
+  ;;
+*) exit 2 ;;
+esac
+
+[[ ${!#} == --now ]] || sleep 0.18
+exec hyprctl dispatch "$expr"

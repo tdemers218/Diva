@@ -2,11 +2,63 @@
 
 An Omarchy plugin pack that girlifies the operating system. Includes **Diva**, a personal girly assistant to make everyday navigation simple.
 
-> **Status: planning / pre-implementation.** This README is the project brief and starting point for Claude CLI. Features below are goals, not claims of working functionality. Suggested architecture and milestones are implementation proposals, not a finished specification.
+> **Status: Phase 1 prototype.** The "Implemented so far" section below lists what actually works on the test account. Everything else in this README is still a goal, and the suggested architecture and milestones remain proposals.
+
+## Implemented so far
+
+Tested on Omarchy 4.0.4, on the dedicated test account only. See [docs/architecture.md](docs/architecture.md) for verified mechanisms and open questions.
+
+- **Theme** (`theme/diva`): dark plum with dusty-rose accents. Girly, not bright. Nine wallpapers ship with it, all public domain or CC0 ([credits](theme/diva/backgrounds/CREDITS.md)).
+- **Window look** (`hypr/diva.lua`), for someone used to macOS: rounded corners, slightly translucent windows with a light blur (browsers and video stay opaque), soft shadows, natural scrolling, tap to click, three-finger swipes between workspaces, and `SUPER + Q` to close a window. `bin/diva install --no-look` skips it.
+- **Diva's own menu** (`plugin/`), an Omarchy shell plugin, entirely in French, drawn as frosted glass in the manner of recent macOS: a translucent card blurred by the compositor, hairline highlights, large soft corners, one icon set and no emoji.
+- **Diva herself is always there**: a small pink companion robot with a heart on her antenna, beside a speech bubble where everything she says appears. She floats, blinks at uneven moments, follows the pointer with her eyes, blushes and leans in when it comes close, nods as you type, looks curious at a question, pulses while she thinks, dozes off when nothing happens and wakes with a word, and answers a click with a hop, a burst of hearts and a line of her own.
+- **Diva beyond her menu**: her face replaces the heart in the bar (she waves when the bar appears, looks at the pointer and blushes when it is over her), and she sits in the bottom-right corner of the desktop, behind the windows: she says hello a few seconds after the session starts, glances around now and then, dozes between 23 h and 6 h, warns once when the battery drops under 20 %, and opens her menu when clicked. She moves only in short bursts, so an idle desktop stays idle. "Diva sur le bureau" in the settings hides her.
+- **Motion everywhere** (`hypr/diva.lua`): windows pop in with a small bounce and shrink away, glide when the layout makes room, and cross-fade their rim and dimming on focus; workspaces slide and fade; notifications and reminders slide in from the right; the volume display pops; the scratchpad drops from above. Inside the menu, pages slide up, conversation lines rise into place and extension cards fade in one after another.
+- **Getting around, with Diva's help**:
+  - *Finding windows*: typing an application's name or words from a window's title offers the open window first ("Brave Browser, recette de soupe…") before opening the app again. "Mes fenêtres", among the favourites, lists everything open.
+  - *Acting on the window she was in*: fermer, plein écran, agrandir, détacher ou ranger (floating/tiling), plus large, moins large, à gauche, à droite, changer le partage, fenêtre suivante, garder au premier plan, by button or by words ("ferme la fenêtre", "mets la fenêtre à gauche"). "Envoie la fenêtre sur l'espace 2" and "va sur l'espace 3" work too.
+  - *Explaining*: "comment je ferme une fenêtre ?", "pavé tactile", "souris", "copier coller", "espaces", "capture d'écran" are answered in a sentence, with the keys this computer really has, read from Omarchy's live bindings. The assistant is given the same guide and told not to invent shortcuts.
+  - *Settings and shortcuts*: Diva's settings and all of Omarchy's menu by French or English words, and "raccourcis" opens Omarchy's full list.
+- **Results that look like what they do**: what she types is answered in sections, each with its own kind of card, so a result's nature shows before it is read. Open windows are cards with a live preview of the window; things Diva does right now (sound, light, reminders) are wide buttons; applications and sites are app icons; moves for the current window are small pills; settings are list rows showing where they live; tips are a note with the whole text; her assistant and the web are two bars at the end. The most relevant section comes first, Enter runs the best result, and the arrow keys move by what is on screen.
+- **Fuzzy matching**: letters in order are enough (`frfx` finds Firefox, `tlchrgmnt` finds Téléchargements, `brv` finds the open Brave window), for applications, windows, settings and Diva's own actions. An exact beginning always ranks above a fuzzy find.
+- **Home, iOS style**: seven favourites as app icons (Internet, films, fenêtres, fichiers, téléchargements, photos, documents), then a control centre: round switches for Wi-Fi, Bluetooth, silence and night light, sliders for volume and brightness showing the real values, and buttons for sound, wallpaper, lock, restart and shut down. Everything else is found by typing.
+- **Conversation**: a question (it ends with "?", starts like one, or is a whole sentence) goes to Diva's assistant first instead of a web search, unless Diva already has the exact answer herself. The answer opens a conversation in the menu; follow-ups keep the thread, Esc leaves it.
+- **Films et séries**: YouTube, Netflix and Stremio. What is installed opens; what is not offers to install the official way, after a confirmation: YouTube and Netflix as Omarchy web apps, Stremio as its official Flathub app, per user and without a password.
+- **Settings inside the menu** (the gear in its corner): her name, the assistant, animations, the wallpaper picker.
+- **Finding settings by typing**: Diva's own settings and all of Omarchy's menu, commands and submenus, in French or English (`police`, `thème`, `fuseau horaire`, `mise à jour`, `clavier`). Omarchy's entries come after Diva's own answers, or alone after `>`.
+- **Extensions**: Settings › Extensions browses the official marketplace ([plugins.omarchy.org](https://plugins.omarchy.org/)) on a wider card: category chips with counts, sorting (most loved, most recent, A to Z), verified only, three preview sizes (list, medium cards, large cards), more results as you scroll, and a detail view with the full-size picture, author, version, licence and a link to the code. Install asks for a confirmation; installed plugins can be enabled, disabled, updated or removed, all through `omarchy plugin`.
+- **Local understanding, no network**: plain phrases (`baisse le volume`), typos (`telechargemnts`), levels (`mets le son à 40`), sums (`12*4`), the time and date, well-known sites (`mes mails`), and a web search for anything else (`cherche une recette de crêpes`).
+- **AI assistant, on a subscription she already has**: Claude or ChatGPT, chosen in the menu (gear › Mon assistante). **Me connecter** opens a browser sign-in for the chosen one (no API key), **Tester** checks it, and a list lets her pick the model, each with a line on what it is best for: Haiku, Sonnet, Opus for Claude; GPT-6 Luna, GPT-6.1 Sol, GPT-6 Astra for ChatGPT. The assistant is on as soon as she is signed in. She answers like a warm, natural friend rather than an assistant, and may name one thing to do, which the menu checks against what it really has before running it. Claude runs through the Claude Code CLI and ChatGPT through the Codex CLI, so the one she uses must be installed. An Anthropic API key remains possible with `"ai": { "provider": "anthropic" }`.
+- **Reminders and battery**: `rappelle-moi dans 10 minutes de sortir le gâteau` sets an Omarchy reminder; `batterie` is answered in a sentence, and Diva mentions a battery under 20 % on her own.
+- **Bar and lock screen**: the Diva theme ships a `shell.toml` that makes Omarchy's bar, popups and notifications translucent glass (blurred by Hyprland), a little taller and larger in type, and gives the lock screen's password field a translucent, rose-rimmed, rounded look over the blurred wallpaper.
+- **Learned shortcuts**: what the assistant resolved once is saved in `~/.local/state/diva/learned.json` and answered locally the next time, with no model call. `bin/diva learned` lists and removes them.
+- **Pack manager** (`bin/diva`): install, update, uninstall, status, with backups and state in `~/.local/state/diva/`.
+
+```sh
+bin/diva install     # safe to run again
+bin/diva status
+bin/diva test
+bin/diva uninstall   # restores the previous theme, bar and keybindings
+
+bin/diva ai login    # sign in to the Claude subscription in the browser (same as the menu's button)
+bin/diva ai on       # switch the assistant on (ai off, ai status, ai ask "…")
+bin/diva learned     # list learned shortcuts (learned forget <n>, learned clear)
+```
+
+Diva takes the place of the Omarchy menu: its button sits first in the bar and `SUPER + SPACE` opens it. The Omarchy menu itself stays enabled behind it (`SUPER + ESCAPE` and the other Omarchy shortcuts still work), because Omarchy's own pickers are drawn by it. Her settings are changed from the menu and stored in `~/.config/diva/config.json`:
+
+```json
+{ "name": "", "animations": true, "advancedSearch": true,
+  "ai": { "enabled": true, "provider": "claude", "models": { "claude": "haiku", "chatgpt": "gpt-6-luna" }, "personality": "" } }
+```
+
+Not yet done: voice, a French lock-screen prompt, release-based updates, a fresh-machine install, a French system locale, and any testing on the target laptop.
 
 ## The goal
 
 Diva is a personalized Omarchy experience being built for my girlfriend: cute, very pink, approachable, and usable by someone who is not familiar with computers.
+
+**Everything she sees is in French**: the menu, Diva's replies, and the phrases Diva understands.
 
 The ambition is to make an existing laptop feel like a polished personal computer she actually enjoys using. Appearance matters, but so does being able to open apps, find things, change settings, and watch movies without learning Linux commands or memorizing lots of shortcuts.
 

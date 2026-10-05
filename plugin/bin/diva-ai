@@ -1,0 +1,277 @@
+#!/bin/bash
+
+# Diva's AI assistant. Takes one request and what Diva can do, asks a model,
+# and prints one JSON line. Three ways to reach one (`ai.provider`):
+#
+#   claude      her Claude subscription, through the Claude Code CLI she
+#               signed into in the browser (the default; no API key)
+#   chatgpt     her ChatGPT subscription, through the Codex CLI she signed
+#               into in the browser (no API key)
+#   anthropic   the Anthropic Messages API with a key in ~/.config/diva/api-key
+#
+#   {"ok":true,"reply":"…","intent":{"type":"action","id":"wifi"}}
+#   {"ok":false,"error":"login|cli|key|network|busy|refused|config|api"}
+#
+# It only ever names an intent; the menu checks it against its own registry
+# and runs it. Usage:
+#   diva-ai '<json>'    {"request":"…","actions":[{"id","title"}],"apps":["…"],
+#                        "history":[{"who":"me"|"diva","text":"…"}]}
+#   diva-ai --status    who is signed in, per subscription, and the models
+#   diva-ai --login     sign in to the chosen subscription (run in a terminal)
+
+set -uo pipefail
+
+CONFIG_DIR="${DIVA_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/diva}"
+CONFIG="$CONFIG_DIR/config.json"
+
+fail() {
+  jq -nc --arg error "$1" '{ok: false, error: $error}'
+  exit 0
+}
+
+command -v jq >/dev/null || fail config
+
+setting() { jq -r "$1 // empty" "$CONFIG" 2>/dev/null || true; }
+
+provider=$(setting .ai.provider)
+[[ $provider == anthropic || $provider == chatgpt ]] || provider="claude"
+
+# The desktop's environment may not carry the paths a login shell has.
+find_cli() {
+  local name="$1" candidate
+  for candidate in "$(command -v "$name" 2>/dev/null)" "$HOME/.local/share/mise/shims/$name" "$HOME/.local/bin/$name" \
+    "$HOME/.claude/local/$name" "/usr/local/bin/$name" "/usr/bin/$name"; do
+    if [[ -n $candidate && -x $candidate ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+find_claude() { find_cli claude; }
+find_codex() { find_cli codex; }
+
+# The models she can pick, with what each is best for. Claude's are the
+# Claude Code aliases; ChatGPT's are checked against the Codex catalog below.
+CLAUDE_MODELS='[
+  {"id":"haiku","name":"Haiku","best":"La plus rapide. Parfaite pour les demandes de tous les jours, et celle qui use le moins ton abonnement."},
+  {"id":"sonnet","name":"Sonnet","best":"L'\''équilibre. Plus fine pour expliquer, conseiller ou écrire, sans te faire attendre."},
+  {"id":"opus","name":"Opus","best":"La plus réfléchie. Pour les questions vraiment difficiles ; elle use plus vite ton abonnement."}
+]'
+CHATGPT_MODELS='[
+  {"id":"gpt-6-luna","name":"GPT-6 Luna","best":"Rapide et légère. Idéale pour les demandes simples de tous les jours."},
+  {"id":"gpt-6.1-sol","name":"GPT-6.1 Sol","best":"La polyvalente. Bonne à tout faire, du quotidien aux explications."},
+  {"id":"gpt-6-astra","name":"GPT-6 Astra","best":"La plus puissante. Pour les demandes les plus exigeantes ; plus lente."}
+]'
+
+# The model for a subscription: her choice in ai.models, else its lightest.
+chosen_model() {
+  local picked
+  picked=$(jq -r --arg p "$1" '.ai.models[$p] // empty' "$CONFIG" 2>/dev/null || true)
+  if [[ -n $picked ]]; then echo "$picked"; else echo "$2"; fi
+}
+
+if [[ ${1:-} == --status ]]; then
+  claude_state='{"cli":false,"loggedIn":false,"plan":""}'
+  if claude_bin=$(find_claude); then
+    # Only whether she is signed in and on which plan; never the address.
+    claude_state=$("$claude_bin" auth status 2>/dev/null |
+      jq -c '{cli: true, loggedIn: (.loggedIn == true), plan: (.subscriptionType // "")}' 2>/dev/null) ||
+      claude_state='{"cli":true,"loggedIn":false,"plan":""}'
+    [[ -n $claude_state ]] || claude_state='{"cli":true,"loggedIn":false,"plan":""}'
+  fi
+  chatgpt_state='{"cli":false,"loggedIn":false,"plan":""}'
+  chatgpt_models="$CHATGPT_MODELS"
+  if codex_bin=$(find_codex); then
+    logged=false
+    "$codex_bin" login status 2>&1 | grep -qi '^logged in' && logged=true
+    chatgpt_state=$(jq -nc --argjson in "$logged" '{cli: true, loggedIn: $in, plan: ""}')
+    # Offer only the models this Codex really lists.
+    catalog=$("$codex_bin" debug models 2>/dev/null | jq -c '[(.models // .)[]? | select((.visibility // "list") == "list") | .slug]' 2>/dev/null)
+    if [[ -n $catalog && $catalog != "[]" ]]; then
+      chatgpt_models=$(jq -c --argjson have "$catalog" '[.[] | select(.id as $id | $have | index($id) != null)]' <<<"$CHATGPT_MODELS")
+    fi
+  fi
+  key_file=$(setting .ai.keyFile)
+  [[ -n $key_file ]] || key_file="$CONFIG_DIR/api-key"
+  key_ok=false
+  [[ -s ${key_file/#\~/$HOME} ]] && key_ok=true
+  jq -nc --arg provider "$provider" --argjson claude "$claude_state" --argjson chatgpt "$chatgpt_state" --argjson key "$key_ok" \
+    --argjson claudeModels "$CLAUDE_MODELS" --argjson chatgptModels "$chatgpt_models" \
+    --arg claudeModel "$(chosen_model claude haiku)" --arg chatgptModel "$(chosen_model chatgpt gpt-6-luna)" '
+    {provider: $provider,
+     claude: ($claude + {models: $claudeModels, model: $claudeModel}),
+     chatgpt: ($chatgpt + {models: $chatgptModels, model: $chatgptModel}),
+     anthropic: {cli: true, loggedIn: $key, plan: "", models: [], model: ""}}
+    | . + {cli: .[$provider].cli, loggedIn: .[$provider].loggedIn, plan: .[$provider].plan}'
+  exit 0
+fi
+
+if [[ ${1:-} == --login ]]; then
+  if [[ $provider == chatgpt ]]; then
+    if ! codex_bin=$(find_codex); then
+      echo "Codex n'est pas installé sur cet ordinateur."
+      echo "Installe-le d'abord (https://developers.openai.com/codex/cli), puis reviens ici."
+      exit 1
+    fi
+    echo "Une page va s'ouvrir dans le navigateur : connecte-toi avec ton compte ChatGPT."
+    echo
+    exec "$codex_bin" login
+  fi
+  if ! claude_bin=$(find_claude); then
+    echo "Claude Code n'est pas installé sur cet ordinateur."
+    echo "Installe-le d'abord (https://claude.com/claude-code), puis reviens ici."
+    exit 1
+  fi
+  echo "Une page va s'ouvrir dans le navigateur : connecte-toi avec ton compte Claude."
+  echo
+  exec "$claude_bin" auth login --claudeai
+fi
+
+input="${1:-}"
+jq -e '.request | type == "string" and length > 0' <<<"$input" >/dev/null 2>&1 || fail config
+
+name=$(setting .name)
+personality=$(setting .ai.personality)
+
+# Who Diva is. She is a friend who happens to live in the computer, not an
+# assistant reading a script; `ai.personality` in the settings adds to this.
+system=$(jq -r --arg name "$name" --arg extra "$personality" '
+  "Tu es Diva. Tu vis dans l'\''ordinateur de " + (if $name == "" then "ta copine" else $name end) +
+  " et tu es un peu sa meilleure amie qui s'\''y connaît : pétillante, tendre, drôle sans en faire trop, toujours de son côté.\n\n" +
+  "Ta façon de parler : comme on s'\''écrit entre amies. Naturelle, spontanée, tutoiement, phrases courtes. " +
+  "Un petit mot doux de temps en temps (« ma belle », « t'\''inquiète », « et hop »). Jamais d'\''emoji ni de smiley : tes mots suffisent. " +
+  "Une ou deux phrases, pas plus, sauf si elle te demande vraiment une explication.\n\n" +
+  "Ce que tu ne fais jamais : parler comme un robot ou un service client. Pas de « en tant qu'\''assistante », " +
+  "pas de « je suis là pour t'\''aider », pas de « n'\''hésite pas », pas de « bien sûr ! » automatique, pas de listes, pas de mots techniques. " +
+  "Tu ne te présentes pas et tu ne répètes pas sa question. " +
+  "Elle n'\''est pas à l'\''aise avec les ordinateurs : rassure-la, et ne lui fais jamais sentir qu'\''une question est bête. " +
+  "Si tu ne sais pas ou si tu ne peux pas, dis-le simplement, comme une amie le dirait." +
+  (if $extra == "" then "" else "\n\n" + $extra end) + "\n\n" +
+  "Tu peux aussi faire UNE chose pour elle sur l'\''ordinateur (le champ intent) :\n" +
+  "- action : une action de la liste ci-dessous, avec son id exact dans action_id.\n" +
+  "- app : ouvrir une application de la liste, avec son nom exact dans app_name.\n" +
+  "- url : ouvrir une page web précise, adresse https complète dans url.\n" +
+  "- search : chercher sur Internet, mots à chercher dans query.\n" +
+  "- volume ou brightness : régler le son ou la luminosité, pourcentage de 0 à 100 dans percent.\n" +
+  "- none : rien à faire sur l'\''ordinateur, tu lui réponds simplement dans reply.\n\n" +
+  "Quand tu fais quelque chose, reply dit ce que tu fais, avec ta voix à toi (« Je te mets ça moins fort »). " +
+  "N'\''invente jamais une action ou une application absente des listes. Si sa demande n'\''est pas claire, " +
+  "choisis none et pose-lui une seule question toute simple. Tu ne peux rien installer ni changer les réglages du système : " +
+  "si elle le demande, dis-lui gentiment de demander un coup de main. " +
+  "Laisse vides ou à 0 les champs qui ne servent pas.\n\n" +
+  (if ((.guide // "") | length) > 0
+   then "Pour l'\''aider à s'\''y retrouver, voici ce qui est vrai sur cet ordinateur. Appuie-toi dessus, et n'\''invente aucun autre raccourci :\n" + .guide + "\n\n"
+   else "" end) +
+  "Actions disponibles :\n" + ([.actions[]? | "- " + .id + " : " + .title] | join("\n")) + "\n\n" +
+  "Applications installées :\n" + ([.apps[]? | "- " + .] | join("\n"))
+' <<<"$input") || fail config
+
+schema='{"type":"object","properties":{"reply":{"type":"string","description":"Ce que Diva lui dit, avec sa voix à elle, en français"},"intent":{"type":"string","enum":["action","app","url","search","volume","brightness","none"]},"action_id":{"type":"string"},"app_name":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"percent":{"type":"integer"}},"required":["reply","intent","action_id","app_name","url","query","percent"],"additionalProperties":false}'
+
+# Her answer, whichever way it came, as the one line the menu reads.
+emit() {
+  jq -c '{ok: true, reply: (.reply // ""), intent: (
+      if .intent == "action" then {type: "action", id: .action_id}
+      elif .intent == "app" then {type: "app", name: .app_name}
+      elif .intent == "url" then {type: "url", url: .url}
+      elif .intent == "search" then {type: "search", query: .query}
+      elif .intent == "volume" or .intent == "brightness" then {type: .intent, percent: .percent}
+      else {type: "none"} end)}' 2>/dev/null || fail api
+}
+
+# A follow-up carries the last few lines of the conversation with it.
+request=$(jq -r '
+  (if ((.history // []) | length) > 0
+   then "Votre conversation jusqu'\''ici :\n" +
+        ([(.history // [])[-8:][] | (if .who == "me" then "Elle : " else "Diva : " end) + (.text | tostring)] | join("\n")) +
+        "\n\nElle, maintenant : "
+   else "" end) + .request' <<<"$input")
+work="${XDG_CACHE_HOME:-$HOME/.cache}/diva/ai"
+
+if [[ $provider == claude ]]; then
+  claude_bin=$(find_claude) || fail cli
+  model=$(chosen_model claude haiku)
+  # No tools, no saved session, none of her Claude Code settings or memory:
+  # one question in an empty folder, one structured answer back.
+  mkdir -p "$work" && cd "$work" || fail config
+  out=$(timeout 90 "$claude_bin" -p "$request" --system-prompt "$system" --json-schema "$schema" \
+    --output-format json --tools "" --no-session-persistence --setting-sources "" --strict-mcp-config \
+    --model "$model" </dev/null 2>/dev/null)
+  status=$?
+  if [[ $status -ne 0 || -z $out ]]; then
+    "$claude_bin" auth status 2>/dev/null | jq -e '.loggedIn == true' >/dev/null 2>&1 || fail login
+    (( status == 124 )) && fail network
+    fail api
+  fi
+  jq -e '.is_error != true and (.structured_output | type == "object")' <<<"$out" >/dev/null 2>&1 || fail api
+  jq -c '.structured_output' <<<"$out" | emit
+  exit 0
+fi
+
+if [[ $provider == chatgpt ]]; then
+  codex_bin=$(find_codex) || fail cli
+  "$codex_bin" login status 2>&1 | grep -qi '^logged in' || fail login
+  model=$(chosen_model chatgpt gpt-6-luna)
+  # One question in an empty folder, read-only, nothing kept; the answer is
+  # the last message, shaped by the same schema.
+  mkdir -p "$work" && cd "$work" || fail config
+  schema_file=$(mktemp "$work/schema.XXXXXX.json")
+  answer_file=$(mktemp "$work/answer.XXXXXX.json")
+  trap 'rm -f "$schema_file" "$answer_file"' EXIT
+  printf '%s\n' "$schema" >"$schema_file"
+  timeout 120 "$codex_bin" exec --skip-git-repo-check --ephemeral -s read-only --color never \
+    -m "$model" -c 'model_reasoning_effort="low"' --output-schema "$schema_file" -o "$answer_file" \
+    "$system
+
+---
+
+$request" </dev/null >/dev/null 2>&1
+  status=$?
+  (( status == 124 )) && fail network
+  [[ $status -eq 0 && -s $answer_file ]] || fail api
+  jq -c . "$answer_file" 2>/dev/null | emit
+  exit 0
+fi
+
+command -v curl >/dev/null || fail config
+model=$(setting .ai.model)
+[[ -n $model ]] || model="claude-haiku-4-5"
+base=$(setting .ai.baseUrl)
+[[ -n $base ]] || base="https://api.anthropic.com"
+key_file=$(setting .ai.keyFile)
+[[ -n $key_file ]] || key_file="$CONFIG_DIR/api-key"
+key_file="${key_file/#\~/$HOME}"
+
+key="${ANTHROPIC_API_KEY:-}"
+[[ -n $key || ! -r $key_file ]] || key=$(tr -d '[:space:]' <"$key_file")
+[[ -n $key ]] || fail key
+
+body=$(jq -nc --arg model "$model" --arg system "$system" --arg request "$request" --argjson schema "$schema" '{
+  model: $model,
+  max_tokens: 1024,
+  system: $system,
+  messages: [{role: "user", content: $request}],
+  output_config: {format: {type: "json_schema", schema: $schema}}
+}') || fail config
+
+response=$(mktemp)
+trap 'rm -f "$response"' EXIT
+
+# The key goes through a header file on stdin, never on the command line.
+status=$(curl -sS -m 30 -o "$response" -w '%{http_code}' "$base/v1/messages" \
+  -H "content-type: application/json" -H "anthropic-version: 2023-06-01" \
+  -H @- -d "$body" <<<"x-api-key: $key" 2>/dev/null) || fail network
+
+case "$status" in
+200) ;;
+401 | 403) fail key ;;
+429 | 529) fail busy ;;
+5*) fail network ;;
+*) fail api ;;
+esac
+
+[[ $(jq -r '.stop_reason // empty' "$response") != refusal ]] || fail refused
+
+# The answer is the JSON text of the first text block.
+jq -c '[.content[]? | select(.type == "text") | .text] | first // "" | fromjson' "$response" 2>/dev/null | emit

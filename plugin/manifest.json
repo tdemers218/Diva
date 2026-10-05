@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.tdemers218.diva",
+  "name": "Diva",
+  "version": "0.9.0",
+  "author": "Tristan Demers",
+  "license": "MIT",
+  "description": "Diva : un menu, une assistante et une petite compagne sur le bureau, en français",
+  "homepage": "https://github.com/tdemers218/Diva",
+  "kinds": [
+    "overlay",
+    "bar-widget",
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Diva.qml",
+    "barWidget": "BarWidget.qml",
+    "service": "Companion.qml"
+  },
+  "barWidget": {
+    "displayName": "Diva",
+    "description": "Ouvre le menu Diva",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

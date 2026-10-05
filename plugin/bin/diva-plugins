@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# Diva's window onto Omarchy shell plugins: the official marketplace catalog
+# (plugins.omarchy.org) and the `omarchy plugin` commands. Prints one JSON
+# line per call. It adds no install path of its own: every change goes
+# through `omarchy plugin`, which validates the plugin and never uses sudo.
+#
+#   diva-plugins list [--category C] [--sort stars|recent|name] [--verified]
+#                     [--limit N] [search words]
+#                                         catalog results + what is installed
+#   diva-plugins add <https://github.com/owner/repo>
+#   diva-plugins remove|enable|disable|update <plugin-id>
+
+set -uo pipefail
+
+CATALOG_URL="https://plugins.omarchy.org/catalog.json"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/diva"
+CACHE="$CACHE_DIR/catalog.json"
+SELF="io.github.tdemers218.diva"
+
+fail() {
+  jq -nc --arg error "$1" --arg message "${2:-}" '{ok: false, error: $error, message: $message}'
+  exit 0
+}
+
+done_ok() {
+  jq -nc --arg message "$1" '{ok: true, message: $message}'
+  exit 0
+}
+
+command -v jq >/dev/null && command -v curl >/dev/null || fail config
+
+valid_id() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $1 != *..* && $1 != omarchy.* ]]; }
+
+# The catalog is large, so keep a copy and refresh it once a day. A stale copy
+# is better than none when the network is down.
+refresh_catalog() {
+  mkdir -p "$CACHE_DIR"
+  if [[ -s $CACHE && -z $(find "$CACHE" -mmin +1440 2>/dev/null) ]]; then return 0; fi
+  local tmp
+  tmp=$(mktemp "$CACHE.XXXXXX")
+  if curl -fsS -m 90 -o "$tmp" "$CATALOG_URL" 2>/dev/null && jq -e '.plugins | type == "array"' "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$CACHE"
+  else
+    rm -f "$tmp"
+    [[ -s $CACHE ]]
+  fi
+}
+
+run_omarchy() {
+  local output
+  if output=$(omarchy plugin "$@" 2>&1); then
+    done_ok "$(tail -n1 <<<"$output")"
+  else
+    fail failed "$(tail -n1 <<<"$output")"
+  fi
+}
+
+command="${1:-}"
+shift || true
+
+case "$command" in
+list)
+  category="" sort="stars" verified=false limit=60 words=()
+  while (( $# > 0 )); do
+    case "$1" in
+    --category) category="${2:-}"; shift 2 ;;
+    --sort) sort="${2:-stars}"; shift 2 ;;
+    --verified) verified=true; shift ;;
+    --limit) [[ ${2:-} =~ ^[0-9]{1,3}$ ]] && limit="$2"; shift 2 ;;
+    *) words+=("$1"); shift ;;
+    esac
+  done
+  query="${words[*]:-}"
+  installed=$(omarchy plugin list --json 2>/dev/null | jq -c --arg self "$SELF" \
+    '[.[] | select(.firstParty == false and .id != $self) | {id, name, enabled}]' 2>/dev/null) || installed="[]"
+  [[ -n $installed ]] || installed="[]"
+  refresh_catalog || {
+    jq -nc --argjson installed "$installed" '{ok: false, error: "network", installed: $installed, results: [], categories: []}'
+    exit 0
+  }
+  # Only plugins the marketplace marks installable, from a plain GitHub repo.
+  # Every search word must appear somewhere in the listing. `categories`
+  # counts what the search matches before the category filter, so the chips
+  # show where the results are.
+  jq -c --arg q "$query" --arg self "$SELF" --arg category "$category" --arg sort "$sort" \
+    --argjson verified "$verified" --argjson limit "$limit" --argjson installed "$installed" '
+    def asset: if ((. // "") | test("^assets/[A-Za-z0-9/_.-]+$")) then "https://plugins.omarchy.org/" + . else "" end;
+    ($q | ascii_downcase | split(" ") | map(select(length > 0))) as $words
+    | ($installed | map(.id)) as $have
+    | [ .plugins[]
+        | select(.installAvailable == true and .id != $self)
+        | select((.repo // "") | test("^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$"))
+        | select(($verified | not) or .verificationStatus == "verified")
+        | ([.name, .description, .author, .category, ((.tags // []) | join(" "))] | map(. // "") | join(" ") | ascii_downcase) as $text
+        | select(all($words[]; . as $w | $text | contains($w))) ] as $found
+    | ($found | map(select($category == "" or .category == $category))) as $shown
+    | {ok: true, installed: $installed, total: (.plugins | length), matches: ($shown | length),
+       categories: ($found | group_by(.category // "Other") | map({name: (.[0].category // "Other"), count: length}) | sort_by(-.count)),
+       results: [ $shown
+         | (if $sort == "recent" then sort_by(.repositoryUpdatedAt // "") | reverse
+            elif $sort == "name" then sort_by(.name | ascii_downcase)
+            else sort_by(-(.stars // 0)) end)
+         | .[0:$limit][]
+         | {id, name, description: (.description // ""), author: (.author // ""), category: (.category // ""),
+            stars: (.stars // 0), repo, verified: (.verificationStatus == "verified"),
+            version: (.version // ""), license: (.license // ""), updated: ((.repositoryUpdatedAt // "") | .[0:10]),
+            thumb: (.previewThumbnail | asset), image: (.previewImage | asset),
+            installed: (.id as $id | $have | index($id) != null)} ]}
+  ' "$CACHE" 2>/dev/null || fail catalog
+  ;;
+add)
+  repo="${1:-}"
+  [[ $repo =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$ ]] || fail invalid
+  run_omarchy add "$repo" --enable --yes
+  ;;
+remove | update)
+  id="${1:-}"
+  valid_id "$id" && [[ $id != "$SELF" ]] || fail invalid
+  run_omarchy "$command" "$id" --yes
+  ;;
+enable | disable)
+  id="${1:-}"
+  valid_id "$id" && [[ $id != "$SELF" ]] || fail invalid
+  run_omarchy "$command" "$id"
+  ;;
+*) fail usage ;;
+esac

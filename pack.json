@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "name": "diva",
+  "version": "0.9.0",
+  "testedOmarchy": "4.0.4",
+  "modules": {
+    "theme": {
+      "owner": "diva",
+      "source": "theme/diva",
+      "target": "~/.config/omarchy/themes/diva",
+      "why": "The desktop's colours and wallpapers, plus shell.toml: a translucent bar, popups and notifications, a slightly larger type scale, and a rose-rimmed lock field"
+    },
+    "menu": {
+      "owner": "diva",
+      "source": "plugin",
+      "target": "~/.config/omarchy/plugins/io.github.tdemers218.diva",
+      "why": "Diva's own French menu, her bar button and her desktop companion, as one Omarchy shell plugin"
+    },
+    "look": {
+      "owner": "diva",
+      "source": "hypr/diva.lua",
+      "target": "~/.config/hypr/diva.lua",
+      "why": "Rounded, softly translucent windows, macOS-like touchpad behaviour, glass blur for Diva and the bar, and desktop-wide motion, loaded by one marked require() line in hyprland.lua"
+    }
+  },
+  "dependencies": {},
+  "bundled": {
+    "Fredoka": {
+      "source": "https://github.com/google/fonts/tree/main/ofl/fredoka",
+      "license": "OFL-1.1",
+      "path": "plugin/fonts/Fredoka.ttf",
+      "why": "The rounded typeface of Diva's menu"
+    },
+    "wallpapers": {
+      "path": "theme/diva/backgrounds",
+      "license": "Public domain / CC0, per image",
+      "credits": "theme/diva/backgrounds/CREDITS.md",
+      "why": "Nine dusk-toned wallpapers to choose from"
+    }
+  },
+  "optional": {
+    "omarchy-marketplace": {
+      "why": "The Extensions page lists plugins from the official catalog and installs them through `omarchy plugin add`",
+      "source": "https://plugins.omarchy.org/catalog.json",
+      "needs": [
+        "curl",
+        "jq"
+      ]
+    },
+    "claude-subscription": {
+      "why": "Diva's optional AI assistant (plugin/bin/diva-ai) asks Claude through the Claude Code CLI she signed into in the browser; no API key",
+      "needs": [
+        "Claude Code CLI (`claude`), signed in with `claude auth login`",
+        "jq"
+      ],
+      "alternative": "ai.provider = \"anthropic\" uses the Messages API with a key in ~/.config/diva/api-key"
+    },
+    "films": {
+      "why": "Films et séries offers YouTube and Netflix as Omarchy web apps and Stremio as its official Flathub app (com.stremio.Stremio), installed per user without sudo",
+      "needs": [
+        "flatpak (for Stremio)"
+      ]
+    },
+    "chatgpt-subscription": {
+      "why": "The assistant can run on a ChatGPT subscription instead, through the Codex CLI she signed into in the browser",
+      "needs": [
+        "Codex CLI (`codex`), signed in with `codex login`",
+        "jq"
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Installs one of the places Diva offers for films, the official way for
+# each, as the current user and without sudo. It takes a fixed name, never a
+# package or an address:
+#
+#   diva-install youtube|netflix   an Omarchy web app (omarchy-webapp-install)
+#   diva-install stremio           the official Flathub app, opened in a
+#                                  terminal so the download can be watched
+
+set -uo pipefail
+
+STREMIO="com.stremio.Stremio"
+FLATHUB="https://dl.flathub.org/repo/flathub.flatpakrepo"
+ICONS="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png"
+
+notify() { omarchy-notification-send "$1" "$2" 2>/dev/null || true; }
+
+case "${1:-}" in
+youtube)
+  omarchy-webapp-install "YouTube" "https://youtube.com/" "$ICONS/youtube.png" >/dev/null &&
+    exec omarchy-launch-webapp "https://youtube.com/"
+  ;;
+netflix)
+  omarchy-webapp-install "Netflix" "https://www.netflix.com/" "$ICONS/netflix.png" >/dev/null &&
+    exec omarchy-launch-webapp "https://www.netflix.com/"
+  ;;
+stremio)
+  # Re-run inside a visible terminal unless we already are in one.
+  if [[ ${2:-} != --here ]]; then
+    exec omarchy-launch-floating-terminal-with-presentation "$(printf '%q' "$0")" stremio --here
+  fi
+  command -v flatpak >/dev/null || { echo "Flatpak n'est pas installé sur cet ordinateur."; exit 1; }
+  echo "Installation de Stremio depuis Flathub (la source officielle)…"
+  echo
+  # A per-user Flathub remote needs no password.
+  flatpak remote-add --user --if-not-exists flathub "$FLATHUB" || exit 1
+  if flatpak install --user -y --noninteractive flathub "$STREMIO"; then
+    notify "Stremio est installé" "Tu le trouveras dans Diva, sous Films et séries."
+  else
+    echo
+    echo "L'installation n'a pas abouti. Vérifie la connexion Internet et réessaie."
+    exit 1
+  fi
+  ;;
+*)
+  echo "usage: diva-install youtube|netflix|stremio" >&2
+  exit 2
+  ;;
+esac
