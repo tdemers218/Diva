@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# Runs one of Diva's actions and reports whether it really happened, so she
+# never says "c'est fait" on faith. The argv comes from Smart.argv (fixed
+# shapes); the check names what must be true afterwards:
+#
+#   diva-run <check> -- <argv...>
+#
+#   none                    nothing observable to check
+#   launch                  a window appeared, or another one took the focus
+#   focus:<0xaddress>       that window is now the active one
+#   closed                  the window that was active is gone
+#   float | fullscreen      that property of the active window changed
+#   state:<field>:<want>    bin/diva-state's field moved: up, down, toggle, or =N
+#
+# Prints {"ok":bool,"verified":bool,"detail":"…"}. `verified` is false when
+# nothing could be observed either way; `ok` is false only on real evidence
+# of failure.
+
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+check="${1:-none}"
+shift || true
+[[ ${1:-} == -- ]] && shift
+(( $# > 0 )) || { echo '{"ok":false,"verified":true,"detail":"nothing to run"}'; exit 0; }
+
+report() { jq -nc --argjson ok "$1" --argjson verified "$2" --arg detail "$3" '{ok: $ok, verified: $verified, detail: $detail}'; exit 0; }
+clients() { hyprctl clients -j 2>/dev/null | jq -c '[.[] | select(.mapped) | .address] | sort' 2>/dev/null; }
+active() { hyprctl activewindow -j 2>/dev/null | jq -r "${1:-.address} // \"\"" 2>/dev/null; }
+field() { "$here/diva-state" 2>/dev/null | jq -r --arg f "$1" '.[$f]' 2>/dev/null; }
+# poll <tries> <command...>: true as soon as the command succeeds.
+poll() {
+  local tries="$1" i
+  shift
+  for (( i = 0; i < tries; i++ )); do
+    "$@" && return 0
+    sleep 0.25
+  done
+  return 1
+}
+
+before_clients=$(clients)
+before_active=$(active)
+before_value=""
+case "$check" in
+state:*)
+  name="${check#state:}"
+  want="${name#*:}"
+  name="${name%%:*}"
+  before_value=$(field "$name")
+  ;;
+float) before_value=$(active .floating) ;;
+fullscreen) before_value=$(active .fullscreen) ;;
+esac
+
+"$@" >/dev/null 2>&1 &
+pid=$!
+
+case "$check" in
+launch)
+  changed() { [[ $(clients) != "$before_clients" || $(active) != "$before_active" ]]; }
+  poll 32 changed && report true true "a window appeared"
+  # Nothing visibly changed: a failure only if the launcher itself failed.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    wait "$pid"
+    code=$?
+    (( code == 0 )) || report false true "the command failed (exit $code)"
+  fi
+  report true false "no change seen"
+  ;;
+focus:*)
+  at() { [[ $(active) == "${check#focus:}" ]]; }
+  poll 10 at && report true true "focused"
+  report false true "the window did not take the focus"
+  ;;
+closed)
+  gone() { ! clients | jq -e --arg a "$before_active" 'index($a) != null' >/dev/null 2>&1; }
+  [[ -n $before_active ]] || report true false "no window was active"
+  poll 12 gone && report true true "closed"
+  report false true "the window is still open"
+  ;;
+float | fullscreen)
+  flipped() { [[ $(active ".$check") != "$before_value" ]]; }
+  poll 10 flipped && report true true "$check changed"
+  report false true "$check did not change"
+  ;;
+state:*)
+  reached() {
+    local now
+    now=$(field "$name")
+    case "$want" in
+    up) (( now > before_value || now >= 100 )) ;;
+    down) (( now < before_value || now <= 1 )) ;;
+    toggle) [[ $now != "$before_value" ]] ;;
+    =*) (( now >= ${want#=} - 3 && now <= ${want#=} + 3 )) ;;
+    *) return 1 ;;
+    esac
+  }
+  [[ $before_value =~ ^-?[0-9]+$ || $before_value == true || $before_value == false ]] || report true false "no reading for $name"
+  poll 10 reached && report true true "$name is now $(field "$name")"
+  report false true "$name stayed at $(field "$name")"
+  ;;
+*)
+  report true false "not checked"
+  ;;
+esac

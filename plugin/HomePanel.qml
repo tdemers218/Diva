@@ -147,6 +147,24 @@ Column {
     }
   }
 
+  // On battery: how much is left, for how long at this pace, and whether
+  // Diva is saving.
+  Text {
+    textFormat: Text.PlainText
+    visible: root.diva.state.battery >= 0 && !root.diva.state.charging
+    leftPadding: Style.space(4)
+    text: {
+      var s = root.diva.state
+      var left = s.minutes > 0 ? "  ·  environ " + (s.minutes >= 60 ? Math.floor(s.minutes / 60) + " h " + (s.minutes % 60 < 10 ? "0" : "") + (s.minutes % 60) : s.minutes + " min") : ""
+      var saving = s.saving >= 3 ? "  ·  mode économie" : s.saving === 2 ? "  ·  j'économise" : s.saving === 1 ? "  ·  économie douce" : ""
+      return "Batterie " + s.battery + " %" + left + saving
+    }
+    color: root.diva.state.battery <= 20 ? root.diva.rose : root.diva.soft
+    font.family: root.diva.fontFamily
+    font.pixelSize: Style.space(12)
+    font.weight: Font.Medium
+  }
+
   // Control centre.
   Row {
     width: parent.width
@@ -171,14 +189,14 @@ Column {
           on: root.diva.state.wifi === true
           caption: root.diva.state.wifi ? (root.diva.state.network || "Pas connecté") : "Éteint"
           onToggled: root.diva.control("wifi", "")
-          onMore: root.diva.runAndClose(["omarchy-shell", "shell", "toggle", "omarchy.network"])
+          onMore: root.diva.page = "network"
         }
         Switch {
           glyph: "bluetooth"; label: "Bluetooth"; hasMore: true
           on: root.diva.state.bluetooth === true
           caption: root.diva.state.bluetooth ? "Allumé" : "Éteint"
           onToggled: root.diva.control("bluetooth", "")
-          onMore: root.diva.runAndClose(["omarchy-shell", "shell", "toggle", "omarchy.bluetooth"])
+          onMore: root.diva.page = "bluetooth"
         }
         Switch {
           glyph: "volume-off"; label: "Silence"
@@ -188,6 +206,7 @@ Column {
         }
         Switch {
           glyph: "moon"; label: "Lumière de nuit"
+          on: root.diva.state.nightlight === true
           caption: "Plus doux le soir"
           onToggled: root.diva.runQuiet(["omarchy-toggle-nightlight"], "Lumière de nuit changée.")
         }
@@ -226,7 +245,7 @@ Column {
             stacked: true
             text: modelData === "sound" ? "Son" : modelData === "wallpaper" ? "Fond" : action.title
             primary: root.diva.pendingConfirm === "action:" + modelData
-            onClicked: root.diva.activateTile(Actions.tile(action, 0))
+            onClicked: modelData === "wallpaper" ? root.diva.page = "appearance" : root.diva.activateTile(Actions.tile(action, 0))
           }
         }
       }

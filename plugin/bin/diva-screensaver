@@ -1,0 +1,284 @@
+#!/bin/bash
+
+# Diva's screensaver: her name and her face in pinks and lilacs, brought to
+# life by gentle effects chosen at random. Most are ttfx effects given her
+# colours and symbols; a few are drawn here: hearts floating up, sparkles
+# twinkling, Diva blinking and winking, a shimmer of colour. None of the
+# "hacker" ones (matrix, decrypt, binary, glitches) are used.
+#
+# Runs inside the fullscreen terminal bin/diva-screensaver-launch opens; any
+# key, or losing focus, ends it. Adapted from Omarchy's omarchy-screensaver.
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ART_DIR="$here/../art"
+LOGO="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/branding/screensaver.txt"
+STAGE="${XDG_RUNTIME_DIR:-/tmp}/diva-screensaver.txt"
+
+# Her colours.
+ROSE="ffb3d1"
+PINK="ff7fb0"
+LILAC="c9a4f0"
+PEACH="ffc9b0"
+CREAM="ffe9f2"
+MINT="a8e6cf"
+PALETTE=("255;127;176" "255;179;209" "201;164;240" "255;201;176" "255;233;242" "168;230;207")
+
+screensaver_in_focus() {
+  hyprctl activewindow -j | jq -e '.class == "org.omarchy.screensaver"' >/dev/null 2>&1
+}
+
+exit_screensaver() {
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' &>/dev/null || true
+  pkill -x ttfx 2>/dev/null
+  rm -f "$STAGE"
+  printf '\033[?25h'
+  pkill -f '[o]rg.omarchy.screensaver' 2>/dev/null
+  exit 0
+}
+
+trap exit_screensaver SIGINT SIGTERM SIGHUP SIGQUIT
+
+# A deep plum night rather than black, and no text cursor.
+printf '\033]11;rgb:17/0f/17\007\033[?25l'
+hyprctl eval 'hl.config({ cursor = { invisible = true } })' &>/dev/null
+
+tty=$(tty 2>/dev/null)
+
+# The terminal starts at 80x24 and is resized once its window is placed;
+# starting before that would draw into a corner.
+deadline=$((SECONDS + 2))
+while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+  sleep 0.02
+done
+
+# ------------------------------------------------------------------ the art
+
+# What is on stage: her name, her face, or her face above her name.
+ART=()
+HAS_FACE=0
+compose() {
+  local logo=() face=() line width=0 pad
+  mapfile -t logo <"$LOGO"
+  ART=()
+  HAS_FACE=0
+  # DIVA_ART=name|face|both picks what is on stage, for checks.
+  local pick=$((RANDOM % 10))
+  case "${DIVA_ART:-}" in name) pick=0 ;; face) pick=5 ;; both) pick=9 ;; esac
+  case $pick in
+  0 | 1 | 2 | 3 | 4) ART=("${logo[@]}") ;;
+  5 | 6) mapfile -t ART <"$ART_DIR/robot-open.txt"; HAS_FACE=1 ;;
+  *)
+    mapfile -t face <"$ART_DIR/robot-open.txt"
+    for line in "${logo[@]}"; do (( ${#line} > width )) && width=${#line}; done
+    # Her face, centred over her name.
+    pad=$(( (width - 27) / 2 ))
+    (( pad < 0 )) && pad=0
+    for line in "${face[@]}"; do ART+=("$(printf '%*s%s' "$pad" '' "$line")"); done
+    ART+=("" "${logo[@]}")
+    HAS_FACE=1
+    FACE_PAD=$pad
+    ;;
+  esac
+  [[ ${FACE_PAD:-} && ${#ART[@]} -gt 13 ]] || FACE_PAD=0
+  printf '%s\n' "${ART[@]}" >"$STAGE"
+}
+
+# Where the art sits on screen.
+ROWS=24 COLS=80 TOP=1 LEFT=1 WIDE=0 TALL=0
+measure() {
+  local line
+  read -r ROWS COLS < <(stty size 2>/dev/null)
+  : "${ROWS:=24}" "${COLS:=80}"
+  WIDE=0
+  TALL=${#ART[@]}
+  for line in "${ART[@]}"; do (( ${#line} > WIDE )) && WIDE=${#line}; done
+  TOP=$(( (ROWS - TALL) / 2 + 1 ))
+  LEFT=$(( (COLS - WIDE) / 2 + 1 ))
+  (( TOP < 1 )) && TOP=1
+  (( LEFT < 1 )) && LEFT=1
+}
+
+# One line of the art, coloured by where it falls between pink and lilac;
+# `shift` slides the gradient, for the shimmer.
+paint_line() {
+  local i="$1" shift="${2:-0}" t r g b
+  t=$(( ((i + shift) % (TALL * 2)) ))
+  (( t >= TALL )) && t=$(( TALL * 2 - 1 - t ))
+  r=$(( 255 - (255 - 201) * t / (TALL > 1 ? TALL - 1 : 1) ))
+  g=$(( 127 + (164 - 127) * t / (TALL > 1 ? TALL - 1 : 1) ))
+  b=$(( 176 + (240 - 176) * t / (TALL > 1 ? TALL - 1 : 1) ))
+  printf '\033[%d;%dH\033[38;2;%d;%d;%dm%s' $((TOP + i)) "$LEFT" "$r" "$g" "$b" "${ART[$i]}"
+}
+
+paint() {
+  local i
+  for (( i = 0; i < TALL; i++ )); do paint_line "$i" "${1:-0}"; done
+}
+
+# Wait one frame; any key ends everything. Focus is checked about once a second.
+FRAME=0
+tick() {
+  if read -rsn1 -t "${1:-0.09}"; then exit_screensaver; fi
+  FRAME=$((FRAME + 1))
+  if (( FRAME % 12 == 0 )) && ! screensaver_in_focus; then exit_screensaver; fi
+}
+
+# A spot on screen that is not on the art.
+SPOT_ROW=1 SPOT_COL=1
+free_spot() {
+  local tries
+  for (( tries = 0; tries < 8; tries++ )); do
+    SPOT_ROW=$(( RANDOM % ROWS + 1 ))
+    SPOT_COL=$(( RANDOM % COLS + 1 ))
+    if (( SPOT_ROW < TOP - 1 || SPOT_ROW > TOP + TALL || SPOT_COL < LEFT - 2 || SPOT_COL > LEFT + WIDE + 1 )); then return 0; fi
+  done
+  return 1
+}
+
+# ------------------------------------------------------------- her own scenes
+
+# Hearts and flowers drift up either side of her.
+scene_hearts() {
+  local glyphs=("♥" "♡" "✿" "❀" "·") n=16 i frames=160
+  local -a x y g c
+  printf '\033[2J'
+  paint
+  for (( i = 0; i < n; i++ )); do
+    free_spot || continue
+    x[i]=$SPOT_COL; y[i]=$SPOT_ROW; g[i]=${glyphs[RANDOM % 5]}; c[i]=${PALETTE[RANDOM % 6]}
+  done
+  while (( frames-- > 0 )); do
+    for (( i = 0; i < n; i++ )); do
+      [[ -n ${x[i]:-} ]] || continue
+      (( (frames + i) % 2 == 0 )) || continue
+      printf '\033[%d;%dH ' "${y[i]}" "${x[i]}"
+      y[i]=$(( y[i] - 1 ))
+      (( RANDOM % 5 == 0 )) && x[i]=$(( x[i] + RANDOM % 3 - 1 ))
+      if (( y[i] < 1 || x[i] < 1 || x[i] > COLS )) ||
+        (( y[i] >= TOP - 1 && y[i] <= TOP + TALL && x[i] >= LEFT - 2 && x[i] <= LEFT + WIDE + 1 )); then
+        # Off the top, or about to cross her: start again from the bottom.
+        free_spot || continue
+        x[i]=$SPOT_COL; y[i]=$ROWS; g[i]=${glyphs[RANDOM % 5]}; c[i]=${PALETTE[RANDOM % 6]}
+        (( x[i] >= LEFT - 2 && x[i] <= LEFT + WIDE + 1 )) && x[i]=$(( RANDOM % (LEFT > 4 ? LEFT - 3 : 1) + 1 ))
+      fi
+      printf '\033[%d;%dH\033[38;2;%sm%s' "${y[i]}" "${x[i]}" "${c[i]}" "${g[i]}"
+    done
+    tick 0.09
+  done
+}
+
+# Sparkles come and go around her.
+scene_sparkles() {
+  local stages=("·" "✧" "✦" "✧" "·" " ") n=22 i frames=150
+  local -a x y age c
+  printf '\033[2J'
+  paint
+  while (( frames-- > 0 )); do
+    for (( i = 0; i < n; i++ )); do
+      if [[ -z ${age[i]:-} ]]; then
+        (( RANDOM % 9 == 0 )) && free_spot && { x[i]=$SPOT_COL; y[i]=$SPOT_ROW; age[i]=0; c[i]=${PALETTE[RANDOM % 6]}; }
+        continue
+      fi
+      printf '\033[%d;%dH\033[38;2;%sm%s' "${y[i]}" "${x[i]}" "${c[i]}" "${stages[age[i] / 2]}"
+      age[i]=$(( age[i] + 1 ))
+      (( age[i] >= 12 )) && age[i]=""
+    done
+    tick 0.08
+  done
+}
+
+# Her name breathes: the colours slide through it.
+scene_shimmer() {
+  local frames=110 s=0
+  printf '\033[2J'
+  while (( frames-- > 0 )); do
+    paint "$s"
+    (( frames % 2 == 0 )) && s=$((s + 1))
+    tick 0.07
+  done
+}
+
+# She blinks, winks and smiles. Only when her face is on stage.
+scene_face() {
+  local look hold i j
+  local -a eyes
+  printf '\033[2J'
+  paint
+  for look in open:14 blink:2 open:10 wink:6 open:8 happy:16 open:8 blink:2 open:6 blink:2 open:12 happy:14 open:6; do
+    hold=${look#*:}
+    mapfile -t eyes < <(sed -n '8,10p' "$ART_DIR/robot-${look%%:*}.txt")
+    for (( j = 0; j < 3; j++ )); do
+      ART[7 + j]="$(printf '%*s%s' "$FACE_PAD" '' "${eyes[j]}")"
+      # Clear the row first: a closed eye is shorter than an open one.
+      printf '\033[%d;%dH%*s' $((TOP + 7 + j)) "$LEFT" "$WIDE" ''
+      paint_line $((7 + j))
+    done
+    for (( i = 0; i < hold; i++ )); do tick 0.09; done
+  done
+}
+
+# --------------------------------------------------------------- ttfx effects
+
+# One gentle ttfx effect, with what makes it hers.
+effect() {
+  case $((RANDOM % 23)) in
+  0) echo bubbles --bubble-colors $ROSE $LILAC $PEACH $MINT --pop-color $CREAM --final-gradient-stops $PINK $LILAC ;;
+  1) echo fireworks --firework-colors $PINK $LILAC $PEACH $ROSE --firework-symbol "♥" --final-gradient-stops $ROSE $LILAC ;;
+  2) echo rain --rain-colors $ROSE $PINK $LILAC --rain-symbols "♥" "✿" "❀" "·" --final-gradient-stops $PINK $LILAC ;;
+  3) echo bouncyballs --ball-colors $PINK $LILAC $PEACH $MINT --ball-symbols "♥" "●" "✿" --final-gradient-stops $ROSE $LILAC ;;
+  4) echo pour --starting-color $CREAM --final-gradient-stops $PINK $LILAC ;;
+  5) echo waves --wave-gradient-stops $ROSE $PINK $LILAC $PEACH --final-gradient-stops $PINK $LILAC ;;
+  6) echo rings --ring-colors $PINK $LILAC $PEACH --final-gradient-stops $ROSE $LILAC ;;
+  7) echo swarm --base-color $LILAC --flash-color $CREAM --final-gradient-stops $PINK $LILAC ;;
+  8) echo spray --final-gradient-stops $PINK $PEACH $LILAC ;;
+  9) echo sweep --final-gradient-stops $ROSE $LILAC ;;
+  10) echo expand --final-gradient-stops $PINK $LILAC ;;
+  11) echo slide --final-gradient-stops $PEACH $PINK $LILAC ;;
+  12) echo scattered --final-gradient-stops $ROSE $LILAC ;;
+  13) echo highlight --final-gradient-stops $PINK $LILAC ;;
+  14) echo colorshift --gradient-stops $PINK $LILAC $PEACH $ROSE --final-gradient-stops $PINK $LILAC ;;
+  15) echo wipe --final-gradient-stops $ROSE $PINK $LILAC ;;
+  16) echo orbittingvolley --top-launcher-symbol "♥" --right-launcher-symbol "✿" --bottom-launcher-symbol "♥" --left-launcher-symbol "❀" --final-gradient-stops $PINK $LILAC ;;
+  17) echo beams --beam-row-symbols "♥" "✿" "·" --beam-column-symbols "♥" "❀" "·" --beam-gradient-stops $CREAM $ROSE $LILAC --final-gradient-stops $PINK $LILAC ;;
+  18) echo smoke --final-gradient-stops $ROSE $PINK $LILAC ;;
+  19) echo spotlights --final-gradient-stops $PINK $PEACH $LILAC ;;
+  20) echo middleout --final-gradient-stops $PINK $LILAC ;;
+  21) echo slice --final-gradient-stops $ROSE $LILAC ;;
+  22) echo randomsequence --final-gradient-stops $PINK $PEACH $LILAC ;;
+  esac
+}
+
+run_effect() {
+  # shellcheck disable=SC2046
+  ttfx -i "$STAGE" --terminal-background-color 170f17 \
+    --frame-rate 60 --canvas-width 0 --canvas-height 0 --anchor-canvas c --anchor-text c \
+    --no-eol --no-restore-cursor $(effect) &
+  while pgrep -t "${tty#/dev/}" -x ttfx >/dev/null; do
+    if read -rsn1 -t 1 || ! screensaver_in_focus; then exit_screensaver; fi
+  done
+}
+
+while true; do
+  compose
+  measure
+  printf '\033[2J'
+  # DIVA_SCENE=hearts|sparkles|shimmer|face plays only that one, for checks.
+  if [[ -n ${DIVA_SCENE:-} ]] && declare -F "scene_$DIVA_SCENE" >/dev/null; then
+    "scene_$DIVA_SCENE"
+    continue
+  fi
+  # Mostly ttfx; now and then one of her own.
+  case $((RANDOM % 10)) in
+  0 | 1) scene_hearts ;;
+  2) scene_sparkles ;;
+  3) scene_shimmer ;;
+  4) if (( HAS_FACE )); then scene_face; else scene_sparkles; fi ;;
+  *)
+    run_effect
+    # Whatever drew her, she often stays a moment with something of her own.
+    if (( RANDOM % 3 == 0 )); then
+      if (( HAS_FACE )); then scene_face; else scene_hearts; fi
+    fi
+    ;;
+  esac
+done

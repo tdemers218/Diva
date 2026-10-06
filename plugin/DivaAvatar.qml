@@ -4,7 +4,8 @@ import QtQuick.Shapes
 // Diva herself: a small pink companion robot with a heart on her antenna
 // and a face on her screen. She floats, blinks, follows the pointer with her
 // eyes, leans in when it comes close, reacts to typing, and has moods:
-//   idle, curious, thinking, happy, love, shy, sad, sleepy.
+//   idle, curious, thinking, happy, love, shy, sad, sleepy, focus.
+// With `glasses` she is the little hacker: round glasses, a set mouth.
 // Drawn on a 100 x 100 grid and scaled to whatever size she is given.
 Item {
   id: root
@@ -13,6 +14,8 @@ Item {
   // Where she looks, -1..1 on each axis (0, 0 is straight ahead).
   property real lookX: 0
   property real lookY: 0
+  // Round glasses, for when she thinks harder.
+  property bool glasses: false
   // 0..1, how close the pointer is.
   property real near: 0
   readonly property real k: width / 100
@@ -31,6 +34,12 @@ Item {
   function hello() { if (animate) wave.restart() }
   // A keystroke: a tiny nod.
   function typed() { if (animate && !nod.running && !hop.running) nod.restart() }
+  // Petted: she leans into it, with a couple of hearts.
+  function pet() {
+    if (!animate) return
+    if (!hop.running) purr.restart()
+    hearts.burst()
+  }
   // A click on her: a hop and a burst of hearts.
   function poke() {
     if (!animate) return
@@ -80,6 +89,13 @@ Item {
       NumberAnimation { target: body; property: "rotation"; to: 10; duration: 170; easing.type: Easing.InOutSine }
       NumberAnimation { target: body; property: "rotation"; to: -5; duration: 150; easing.type: Easing.InOutSine }
       NumberAnimation { target: body; property: "rotation"; to: 0; duration: 140; easing.type: Easing.OutCubic }
+    }
+    SequentialAnimation {
+      id: purr
+      loops: 2
+      NumberAnimation { target: body; property: "rotation"; to: -7; duration: 110; easing.type: Easing.InOutSine }
+      NumberAnimation { target: body; property: "rotation"; to: 7; duration: 180; easing.type: Easing.InOutSine }
+      NumberAnimation { target: body; property: "rotation"; to: 0; duration: 110; easing.type: Easing.InOutSine }
     }
     SequentialAnimation {
       id: nod
@@ -219,7 +235,7 @@ Item {
               visible: !root.eyesShut && root.mood !== "love"
               anchors.centerIn: parent
               width: parent.width * (root.mood === "curious" ? 1.12 : 1)
-              height: parent.height * blink.open * (root.mood === "curious" ? 1.12 : root.mood === "sad" ? 0.72 : 1)
+              height: parent.height * blink.open * (root.mood === "curious" ? 1.12 : root.mood === "sad" ? 0.72 : root.mood === "focus" ? 0.6 : 1)
               radius: width / 2
               color: root.glow
               Behavior on width { NumberAnimation { duration: 160 * root.ms } }
@@ -264,6 +280,37 @@ Item {
           }
         }
 
+        // Glasses: two rims, a bridge, a glint.
+        Item {
+          visible: root.glasses
+          opacity: root.glasses ? 1 : 0
+          Repeater {
+            model: [17, 41]
+            Rectangle {
+              required property int modelData
+              x: (modelData - 9) * root.k; y: 9.5 * root.k
+              width: 18 * root.k; height: 18 * root.k
+              radius: width / 2
+              color: Qt.rgba(0.75, 0.6, 1, 0.14)
+              border.width: Math.max(1, 1.7 * root.k)
+              border.color: "#d9c2ff"
+              Rectangle {
+                x: parent.width * 0.2; y: parent.height * 0.18
+                width: parent.width * 0.22; height: parent.height * 0.1
+                radius: height / 2
+                rotation: -30
+                color: Qt.rgba(1, 1, 1, 0.7)
+              }
+            }
+          }
+          Rectangle {
+            x: 26 * root.k; y: 17.4 * root.k
+            width: 6 * root.k; height: Math.max(1, 1.7 * root.k)
+            radius: height / 2
+            color: "#d9c2ff"
+          }
+        }
+
         // Mouth.
         Shape {
           x: 22 * root.k; y: 28 * root.k
@@ -279,7 +326,7 @@ Item {
             capStyle: ShapePath.RoundCap
             PathSvg {
               path: root.mood === "sad" ? "M 3 6 Q 7 2.5 11 6"
-                  : root.mood === "sleepy" ? "M 4.5 4 L 9.5 4"
+                  : root.mood === "sleepy" || root.mood === "focus" ? "M 4.5 4.5 L 9.5 4.5"
                   : root.mood === "happy" || root.mood === "love" ? "M 2 2.5 Q 7 9.5 12 2.5"
                   : "M 3.5 3 Q 7 6.6 10.5 3"
             }

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.tdemers218.diva",
   "name": "Diva",
-  "version": "0.9.0",
+  "version": "0.13.0",
   "author": "Tristan Demers",
   "license": "MIT",
-  "description": "Diva : un menu, une assistante et une petite compagne sur le bureau, en français",
+  "description": "Diva : un menu, une assistante et une petite compagne sur le bureau, en fran\u00e7ais",
   "homepage": "https://github.com/tdemers218/Diva",
   "kinds": [
     "overlay",
@@ -16,7 +16,7 @@
   "entryPoints": {
     "overlay": "Diva.qml",
     "barWidget": "BarWidget.qml",
-    "service": "Companion.qml"
+    "service": "Service.qml"
   },
   "barWidget": {
     "displayName": "Diva",

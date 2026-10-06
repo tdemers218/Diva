@@ -131,7 +131,11 @@ Flickable {
     }
 
     // The models of that subscription, and what each is best for.
-    Note { visible: root.models.length > 0; text: "Quel modèle ?" }
+    Note {
+      visible: root.models.length > 0
+      text: "Mon modèle de tous les jours. Pour un problème qui résiste, je mets mes lunettes et je passe sur "
+            + (root.current.deep || "un modèle plus fort") + ", une fois par demande."
+    }
     Repeater {
       model: root.models
       Rectangle {
@@ -226,11 +230,79 @@ Flickable {
     }
 
     Section { text: "APPARENCE" }
+    Note { text: "Mon thème change les couleurs de tout l'ordinateur, avec ses propres fonds d'écran." }
+    Flow {
+      width: parent.width
+      spacing: Style.space(8)
+      Repeater {
+        model: root.diva.themes
+        Rectangle {
+          id: swatch
+          required property var modelData
+          readonly property bool current: root.diva.theme === modelData.id
+          width: (parent.width - parent.spacing * 2) / 3
+          height: Style.space(62)
+          radius: Style.space(18)
+          color: modelData.background
+          border.width: current ? Style.space(2) : 1
+          border.color: current ? root.diva.rose : root.diva.hairline
+          scale: tap.pressed ? 0.97 : 1
+          Behavior on scale { NumberAnimation { duration: root.diva.ms(90) } }
+          Row {
+            x: Style.space(14)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(10)
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(22); height: width; radius: width / 2
+              color: swatch.modelData.accent
+            }
+            Column {
+              anchors.verticalCenter: parent.verticalCenter
+              Text {
+                textFormat: Text.PlainText
+                text: swatch.modelData.name
+                color: swatch.modelData.foreground
+                font.family: root.diva.fontFamily
+                font.pixelSize: Style.space(14)
+                font.weight: Font.DemiBold
+              }
+              Text {
+                textFormat: Text.PlainText
+                text: swatch.modelData.mood
+                color: swatch.modelData.foreground
+                opacity: 0.7
+                font.family: root.diva.fontFamily
+                font.pixelSize: Style.space(11)
+              }
+            }
+          }
+          Text {
+            visible: swatch.current
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            text: Icons.glyph("check")
+            color: swatch.modelData.accent
+            font.family: root.diva.iconFamily
+            font.pixelSize: Style.space(17)
+          }
+          MouseArea { id: tap; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.diva.setTheme(swatch.modelData.id) }
+        }
+      }
+    }
     DivaSwitch {
       width: parent.width; diva: root.diva
       label: "Animations"
       checked: root.diva.animate
       onToggled: function(value) { root.diva.setSetting(["animations"], value) }
+    }
+    DivaSwitch {
+      width: parent.width; diva: root.diva
+      label: "Écran de veille"
+      caption: "Mon nom en rose, avec des bulles, des cœurs et des feux d'artifice, quand tu ne touches à rien."
+      checked: root.diva.config.screensaver !== false
+      onToggled: function(value) { root.diva.setSetting(["screensaver"], value) }
     }
     DivaSwitch {
       width: parent.width; diva: root.diva
@@ -243,7 +315,41 @@ Flickable {
       spacing: Style.space(8)
       DivaButton {
         diva: root.diva; glyph: "images"; text: "Choisir un fond d'écran"
-        onClicked: root.diva.runAndClose(["omarchy-theme-bg-switcher"])
+        onClicked: root.diva.page = "appearance"
+      }
+    }
+
+    Section { text: "BUREAU" }
+    Note { text: "Les fenêtres défilent avec trois doigts. Quatre doigts vers le haut montrent tes espaces et toutes leurs fenêtres. Dans le dock, un clic retrouve l'application; un clic droit l'épingle ou la retire des favoris." }
+    DivaSwitch {
+      width: parent.width; diva: root.diva
+      label: "Aperçu au bord supérieur"
+      caption: "Garde la souris en haut de l'écran un court instant pour voir tes fenêtres."
+      checked: root.diva.config.overviewHotEdge !== false
+      onToggled: function(value) { root.diva.setSetting(["overviewHotEdge"], value) }
+    }
+    DivaButton {
+      diva: root.diva; text: "Voir mes espaces"; glyph: "windows"
+      onClicked: root.diva.runAndClose(["omarchy-shell", "diva.desktop", "show"])
+    }
+
+    Section { text: "BATTERIE" }
+    Note {
+      text: "Sur batterie, j'économise sans que ça se voie d'abord (ombres, flou), puis un peu plus quand elle baisse. Branchée, tout revient."
+    }
+    Row {
+      width: parent.width
+      spacing: Style.space(8)
+      Repeater {
+        model: [{ id: "auto", name: "Automatique" }, { id: "always", name: "Toujours économiser" }, { id: "off", name: "Jamais" }]
+        DivaButton {
+          required property var modelData
+          width: (parent.width - parent.spacing * 2) / 3
+          diva: root.diva
+          text: modelData.name
+          primary: ((root.diva.config.power && root.diva.config.power.mode) || "auto") === modelData.id
+          onClicked: root.diva.setPowerMode(modelData.id)
+        }
       }
     }
 

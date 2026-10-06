@@ -1,11 +1,12 @@
 -- Diva's look and feel for Hyprland, loaded after Omarchy's defaults and the
 -- user's own hypr/*.lua. Aimed at someone coming from macOS: rounded, softly
--- translucent windows, natural scrolling, tap to click, three-finger swipes.
+-- translucent windows, natural scrolling, tap to click, a scrolling window ribbon and overview gestures.
 -- Installed as ~/.config/hypr/diva.lua by bin/diva; remove the marked
 -- require() line in hyprland.lua to switch all of it off.
 
 hl.config({
   general = {
+    layout = "scrolling",
     gaps_in = 6,
     gaps_out = 14,
     border_size = 2,
@@ -38,6 +39,13 @@ hl.config({
       noise = 0.02,
       vibrancy = 0.15,
     },
+  },
+
+  scrolling = {
+    column_width = 1.0,
+    fullscreen_on_one_column = true,
+    focus_fit_method = 1,
+    follow_focus = true,
   },
 
   input = {
@@ -92,11 +100,19 @@ hl.animation({ leaf = "layersOut", enabled = true, speed = 2.4, bezier = "divaSo
 hl.layer_rule({ match = { namespace = "^omarchy-(notifications|reminders)$" }, animation = "slide right" })
 hl.layer_rule({ match = { namespace = "^diva-(menu|companion)$" }, no_anim = true })
 
--- Workspaces slide sideways, like macOS spaces, three fingers swipe between
--- them, and the scratchpad drops in from above.
+-- Three fingers move along the window ribbon; workspaces are chosen in
+-- Diva's overview. The scratchpad still drops in from above.
 hl.animation({ leaf = "workspaces", enabled = true, speed = 4.4, bezier = "divaSoft", style = "slidefade 18%" })
 hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 3.6, bezier = "divaSpring", style = "slidevert" })
-hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "horizontal", action = "scroll_move" })
 
 -- Cmd+Q habits: SUPER + Q closes the window, next to Omarchy's SUPER + W.
 o.bind("SUPER + Q", "Fermer la fenêtre", hl.dsp.window.close())
+
+-- Overview lives in Diva's service, independent of whether the menu is open.
+hl.gesture({ fingers = 4, direction = "up", action = function()
+  hl.exec_cmd("omarchy-shell diva.desktop show")
+end })
+hl.gesture({ fingers = 4, direction = "down", action = function()
+  hl.exec_cmd("omarchy-shell diva.desktop hide")
+end })

@@ -58,17 +58,20 @@ var ACTIONS = [
   { id: "wifi", title: "Wi-Fi", glyph: "wifi", reply: "Choisis ton réseau",
     phrases: ["wifi", "wi fi", "reseau", "connexion internet", "connecter internet", "internet marche pas",
               "pas internet"],
-    effect: { type: "exec", argv: ["omarchy-shell", "shell", "toggle", "omarchy.network"] } },
+    effect: { type: "page", page: "network" } },
   { id: "bluetooth", title: "Écouteurs", glyph: "headphones", reply: "Choisis tes écouteurs",
     phrases: ["bluetooth", "connecter ecouteurs", "ecouteurs", "casque", "connecter casque", "airpods",
               "enceinte", "connecter enceinte"],
-    effect: { type: "exec", argv: ["omarchy-shell", "shell", "toggle", "omarchy.bluetooth"] } },
+    effect: { type: "page", page: "bluetooth" } },
   { id: "sound", title: "Réglages du son", glyph: "music", reply: "Voilà les réglages du son",
     phrases: ["reglages son", "audio", "haut parleurs", "micro", "microphone", "son", "volume"],
-    effect: { type: "exec", argv: ["omarchy-shell", "shell", "toggle", "omarchy.audio"] } },
+    effect: { type: "page", page: "audio" } },
   { id: "wallpaper", title: "Changer le fond", glyph: "wallpaper", reply: "Et hop, un nouveau fond", stay: true,
     phrases: ["changer fond", "change fond", "nouveau fond", "fond suivant"],
     effect: { type: "exec", argv: ["omarchy-theme-bg-next"] } },
+  { id: "screensaver", title: "Écran de veille", glyph: "sparkles", reply: "Je me fais belle",
+    phrases: ["ecran veille", "veille", "economiseur ecran", "lancer ecran veille"],
+    effect: { type: "screensaver" } },
   { id: "lock", title: "Verrouiller", glyph: "lock", reply: "À tout de suite",
     phrases: ["verrouiller", "verrouille", "verrouiller ordinateur", "bloquer ecran", "verrouiller ecran"],
     effect: { type: "exec", argv: ["omarchy-system-lock"] } },
@@ -182,7 +185,9 @@ function argv(action, config, dirs) {
   var e = action.effect
   if (e.type === "folder") return ["uwsm-app", "--", "nautilus", "--new-window", String(dirs[e.dir] || dirs.HOME)]
   // A group opens a choice of tiles in the menu; it runs nothing itself.
-  if (e.type === "group") return null
+  if (e.type === "group" || e.type === "page") return null
+  // Diva's own screensaver; Smart.argv gives it its path.
+  if (e.type === "screensaver") return null
   return e.argv.slice()
 }
 

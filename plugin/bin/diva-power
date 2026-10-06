@@ -1,0 +1,204 @@
+#!/bin/bash
+
+# Diva's battery care, in the manner of macOS: automatic, quiet, and
+# cutting what is least noticeable first. Run every minute by her desktop
+# service; safe to run again at any time. Prints one JSON line.
+#
+#   diva-power status     what is going on, changing nothing
+#   diva-power apply      move to the level the battery calls for
+#   diva-power restore    put everything back
+#
+# Levels, on battery only (plugged in is always level 0, everything back):
+#   1  any time on battery      Diva's idle motion, window shadows, one blur
+#                               pass instead of two: almost invisible
+#   2  under 50 % or 2 h 30     blur and window translucency off, the
+#                               power-saver profile, Bluetooth off when
+#                               nothing is connected, the screen a little dimmer
+#   3  under 20 % or 45 min     low power mode: desktop animations off, the
+#                               screen capped at 40 %, keyboard light off
+#
+# Heavy use shortens the estimate, so a busy afternoon reaches level 2
+# sooner than a quiet one at the same percentage. `power.mode` in
+# ~/.config/diva/config.json: "auto" (default), "always" (level 3 whenever
+# on battery) or "off".
+#
+# Every cut records what was there before in ~/.local/state/diva/power.json
+# and is put back only if it is still as Diva left it: a brightness she
+# changed herself in the meantime stays hers.
+
+set -uo pipefail
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/diva/config.json"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/diva"
+STATE="$STATE_DIR/power.json"
+mkdir -p "$STATE_DIR"
+[[ -s $STATE ]] && jq -e . "$STATE" >/dev/null 2>&1 || echo '{"level":0,"cuts":{}}' >"$STATE"
+
+get() { jq -r "$1 // empty" "$STATE"; }
+put() {
+  local tmp
+  tmp=$(mktemp "$STATE.XXXXXX")
+  jq "$@" "$STATE" >"$tmp" && mv "$tmp" "$STATE" || rm -f "$tmp"
+}
+has() { [[ -n $(get ".cuts[\"$1\"]") ]]; }
+hypr() { hyprctl eval "$1" >/dev/null 2>&1; }
+brightness() { brightnessctl -m 2>/dev/null | head -n1 | cut -d, -f4 | tr -d '%'; }
+
+# ---------------------------------------------------------------- reading
+
+# DIVA_POWER_FAKE='{"onBattery":true,"percent":35,"minutes":100,"watts":9}'
+# stands in for the battery, for checks.
+reading() {
+  if [[ -n ${DIVA_POWER_FAKE:-} ]]; then
+    jq -c '{onBattery: (.onBattery // false), percent: (.percent // 100), minutes: (.minutes // -1), watts: (.watts // 0)}' <<<"$DIVA_POWER_FAKE"
+    return
+  fi
+  local battery info on=false percent=100 minutes=-1 watts=0 left
+  battery=$(upower -e 2>/dev/null | grep -m1 -i 'BAT' || true)
+  [[ $(busctl get-property org.freedesktop.UPower /org/freedesktop/UPower org.freedesktop.UPower OnBattery 2>/dev/null) == "b true" ]] && on=true
+  if [[ -n $battery ]]; then
+    info=$(upower -i "$battery" 2>/dev/null)
+    percent=$(awk '/percentage:/ { gsub("%", "", $2); print int($2); exit }' <<<"$info")
+    watts=$(awk '/energy-rate:/ { print $2; exit }' <<<"$info")
+    # upower smooths the draw of the last minutes: that is the "usage".
+    left=$(awk '/time to empty:/ { print $4, $5; exit }' <<<"$info")
+    case "$left" in
+    *hours) minutes=$(awk '{ print int($1 * 60) }' <<<"$left") ;;
+    *minutes) minutes=$(awk '{ print int($1) }' <<<"$left") ;;
+    esac
+  fi
+  jq -nc --argjson on "$on" --arg percent "${percent:-100}" --arg minutes "$minutes" --arg watts "${watts:-0}" \
+    '{onBattery: $on, percent: ($percent | tonumber? // 100), minutes: ($minutes | tonumber? // -1), watts: ($watts | tonumber? // 0)}'
+}
+
+level_for() {
+  local mode
+  mode=$(jq -r '.power.mode // "auto"' "$CONFIG" 2>/dev/null || echo auto)
+  jq -r --arg mode "$mode" '
+    if (.onBattery | not) or $mode == "off" then 0
+    elif $mode == "always" then 3
+    elif .percent <= 20 or (.minutes >= 0 and .minutes < 45) then 3
+    elif .percent <= 50 or (.minutes >= 0 and .minutes < 150) then 2
+    else 1 end' <<<"$1"
+}
+
+# ------------------------------------------------------------------- cuts
+
+# The desktop's look is set by the config; a reload puts it back exactly,
+# and the cuts still wanted are then applied again.
+hypr_cuts() {
+  local level="$1"
+  (( level >= 1 )) && hypr 'hl.config({ decoration = { shadow = { enabled = false }, blur = { passes = 1 } } })'
+  (( level >= 2 )) && hypr 'hl.config({ decoration = { blur = { enabled = false } } })' &&
+    hypr 'o.window({ tag = "default-opacity" }, { opacity = "1 1" })'
+  (( level >= 3 )) && hypr 'hl.config({ animations = { enabled = false } })'
+  return 0
+}
+
+cut_profile() {
+  has profile && return
+  local now
+  now=$(powerprofilesctl get 2>/dev/null) || return
+  [[ $now == power-saver ]] && return
+  powerprofilesctl set power-saver 2>/dev/null && put --arg was "$now" '.cuts.profile = $was'
+}
+back_profile() {
+  has profile || return
+  # Only if it is still the profile Diva set.
+  [[ $(powerprofilesctl get 2>/dev/null) == power-saver ]] && powerprofilesctl set "$(get .cuts.profile)" 2>/dev/null
+  put 'del(.cuts.profile)'
+}
+
+cut_bluetooth() {
+  has bluetooth && return
+  omarchy-bluetooth-power is-on >/dev/null 2>&1 || return
+  # In use: leave it alone.
+  (( $(bluetoothctl devices Connected 2>/dev/null | wc -l) == 0 )) || return
+  omarchy-bluetooth-power off >/dev/null 2>&1 && put '.cuts.bluetooth = "on"'
+}
+back_bluetooth() {
+  has bluetooth || return
+  omarchy-bluetooth-power on >/dev/null 2>&1
+  put 'del(.cuts.bluetooth)'
+}
+
+# dim <name> <new level or empty> <cap>: lower the screen once, remembering
+# both what it was and what Diva set, so only her own change is undone.
+cut_dim() {
+  local name="$1" by="$2" cap="$3" now target
+  has "$name" && return
+  now=$(brightness)
+  [[ $now =~ ^[0-9]+$ ]] || return
+  if [[ -n $cap ]]; then
+    (( now > cap )) || return
+    target=$cap
+  else
+    (( now > 60 )) || return
+    target=$(( now - by ))
+  fi
+  omarchy-brightness-display --no-osd "$target%" >/dev/null 2>&1 &&
+    put --arg n "$name" --argjson was "$now" --argjson set "$target" '.cuts[$n] = {was: $was, set: $set}'
+}
+back_dim() {
+  local name="$1" now
+  has "$name" || return
+  now=$(brightness)
+  # She has not touched it since (a point or two of rounding aside).
+  if [[ $now =~ ^[0-9]+$ ]] && (( now >= $(get ".cuts[\"$name\"].set") - 2 && now <= $(get ".cuts[\"$name\"].set") + 2 )); then
+    omarchy-brightness-display --no-osd "$(get ".cuts[\"$name\"].was")%" >/dev/null 2>&1
+  fi
+  put --arg n "$name" 'del(.cuts[$n])'
+}
+
+cut_keyboard() {
+  has keyboard && return
+  omarchy-brightness-keyboard --no-osd off >/dev/null 2>&1 && put '.cuts.keyboard = "on"'
+}
+back_keyboard() {
+  has keyboard || return
+  omarchy-brightness-keyboard --no-osd restore >/dev/null 2>&1
+  put 'del(.cuts.keyboard)'
+}
+
+move_to() {
+  local level="$1" was
+  was=$(get .level)
+  [[ $was =~ ^[0-3]$ ]] || was=0
+  if (( level != was )); then
+    # Back to the configured look, then whatever this level still cuts.
+    hyprctl reload >/dev/null 2>&1
+    sleep 0.3
+    hypr_cuts "$level"
+  fi
+  # Something reloaded the desktop's config meanwhile: the cuts went with it.
+  if (( level >= 1 && level == was )) && [[ $(hyprctl getoption decoration:shadow:enabled 2>/dev/null | head -n1) == *true ]]; then
+    hypr_cuts "$level"
+  fi
+  if (( level >= 2 )); then cut_profile; cut_bluetooth; cut_dim dim 15 ""; else back_dim dim; back_bluetooth; back_profile; fi
+  if (( level >= 3 )); then cut_dim cap "" 40; cut_keyboard; else back_keyboard; back_dim cap; fi
+  put --argjson level "$level" '.level = $level'
+}
+
+report() {
+  local r="$1"
+  jq -c --argjson r "$r" --argjson wanted "$(level_for "$r")" \
+    '{ok: true, level: .level, wanted: $wanted, onBattery: $r.onBattery, percent: $r.percent, minutes: $r.minutes,
+      watts: $r.watts, cuts: (.cuts | keys)}' "$STATE"
+}
+
+case "${1:-status}" in
+status) report "$(reading)" ;;
+apply)
+  r=$(reading)
+  move_to "$(level_for "$r")"
+  report "$r"
+  ;;
+restore)
+  move_to 0
+  report "$(reading)"
+  ;;
+*)
+  echo "usage: diva-power status|apply|restore" >&2
+  exit 2
+  ;;
+esac

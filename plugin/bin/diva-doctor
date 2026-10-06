@@ -1,0 +1,273 @@
+#!/bin/bash
+
+# Diva's troubleshooting tools: look, repair, check, undo, report. Every
+# repair is one of a fixed list, runs as the user without sudo, is written
+# to a journal, and is undone when that is possible. Prints one JSON line.
+#
+#   diva-doctor list             the repairs she may apply
+#   diva-doctor inspect          the state of the things that usually break
+#   diva-doctor repair <id>      apply one repair
+#   diva-doctor verify <id>      did that repair's problem go away?
+#   diva-doctor undo             revert the last repair that can be reverted
+#   diva-doctor report <text>    write a diagnostic for the pack's maintainer
+
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/diva"
+CONFIG="$CONFIG_DIR/config.json"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/diva"
+JOURNAL="$STATE_DIR/journal.jsonl"
+LEARNED="$STATE_DIR/learned.json"
+PLUGIN_ID="io.github.tdemers218.diva"
+mkdir -p "$STATE_DIR"
+
+# id, what it does (said to the model in French), whether undo can revert it.
+REPAIRS='[
+  {"id":"unmute","does":"Remet le son s'\''il est coupé","undo":true},
+  {"id":"raise-volume","does":"Monte le volume à 40 % s'\''il est presque à zéro","undo":true},
+  {"id":"restart-audio","does":"Redémarre le système de son (PipeWire) quand aucun son ne sort ou que la sortie a disparu","undo":false},
+  {"id":"wifi-on","does":"Rallume le Wi-Fi s'\''il est éteint","undo":true},
+  {"id":"restart-wifi","does":"Relance le Wi-Fi (éteint puis rallume, puis nouvelle recherche des réseaux) quand il est allumé mais ne se connecte pas","undo":false},
+  {"id":"bluetooth-on","does":"Rallume le Bluetooth s'\''il est éteint","undo":true},
+  {"id":"restart-bluetooth","does":"Relance le Bluetooth (éteint puis rallume) quand un appareil ne se connecte plus","undo":false},
+  {"id":"restart-shell","does":"Redémarre la barre et les menus d'\''Omarchy, y compris Diva, quand ils sont figés ou absents","undo":false},
+  {"id":"rescan-plugins","does":"Fait relire ses extensions à Omarchy quand Diva ou une extension n'\''apparaît pas","undo":false},
+  {"id":"reset-settings","does":"Remet les réglages de Diva à zéro quand son fichier de réglages est illisible (l'\''ancien est gardé)","undo":true},
+  {"id":"reset-learned","does":"Vide les raccourcis appris quand leur fichier est illisible (l'\''ancien est gardé)","undo":true}
+]'
+
+say() { jq -nc "$@"; exit 0; }
+state() { "$here/diva-state" 2>/dev/null; }
+known() { jq -e --arg id "$1" 'any(.[]; .id == $id)' <<<"$REPAIRS" >/dev/null; }
+journal() { jq -nc --arg at "$(date -Is)" --arg repair "$1" --arg undo "$2" --arg note "$3" \
+  '{at: $at, repair: $repair, undo: $undo, note: $note}' >>"$JOURNAL"; }
+valid_json() { [[ ! -e $1 ]] || jq -e . "$1" >/dev/null 2>&1; }
+
+inspect() {
+  local s connectivity audio shell plugin
+  s=$(state)
+  [[ -n $s ]] || s='{}'
+  connectivity=$(nmcli -t -f CONNECTIVITY general 2>/dev/null || echo unknown)
+  audio=true
+  systemctl --user is-active --quiet pipewire wireplumber 2>/dev/null || audio=false
+  shell=true
+  timeout 3 omarchy-shell shell ping >/dev/null 2>&1 || shell=false
+  plugin=$(omarchy plugin list --json 2>/dev/null | jq -c --arg id "$PLUGIN_ID" 'any(.[]; .id == $id and .enabled == true)' 2>/dev/null)
+  jq -nc --argjson s "$s" --arg connectivity "$connectivity" --argjson audio "$audio" --argjson shell "$shell" \
+    --argjson plugin "${plugin:-false}" \
+    --argjson config "$(valid_json "$CONFIG" && echo true || echo false)" \
+    --argjson learned "$(valid_json "$LEARNED" && echo true || echo false)" \
+    --arg sink "$(omarchy-audio-output-sink 2>/dev/null || true)" \
+    --arg disk "$(df --output=pcent "$HOME" 2>/dev/null | tail -n1 | tr -dc '0-9')" \
+    --arg bluetoothService "$(systemctl is-active bluetooth 2>/dev/null || true)" '
+    {ok: true,
+     sound: {servicesRunning: $audio, output: $sink, volume: ($s.volume // -1), muted: ($s.muted // false)},
+     network: {wifiOn: ($s.wifi // false), network: ($s.network // ""), internet: $connectivity},
+     bluetooth: {on: ($s.bluetooth // false), service: $bluetoothService},
+     screen: {brightness: ($s.brightness // -1)},
+     battery: {percent: ($s.battery // -1), charging: ($s.charging // false)},
+     disk: {usedPercent: ($disk | tonumber? // -1)},
+     diva: {shellAnswers: $shell, pluginEnabled: $plugin, settingsReadable: $config, shortcutsReadable: $learned}}
+    | . + {problems: ([
+        (if .sound.servicesRunning | not then "le système de son ne tourne pas" else empty end),
+        (if .sound.output == "" then "aucune sortie de son" else empty end),
+        (if .sound.muted then "le son est coupé" else empty end),
+        (if .sound.volume >= 0 and .sound.volume < 10 and (.sound.muted | not) then "le volume est presque à zéro" else empty end),
+        (if .network.wifiOn | not then "le Wi-Fi est éteint" else empty end),
+        (if .network.wifiOn and .network.network == "" then "le Wi-Fi est allumé mais connecté à aucun réseau" else empty end),
+        (if .network.network != "" and .network.internet != "full" then "connectée au réseau mais Internet ne répond pas (" + .network.internet + ")" else empty end),
+        (if .bluetooth.on | not then "le Bluetooth est éteint" else empty end),
+        (if .disk.usedPercent >= 95 then "le disque est presque plein" else empty end),
+        (if .diva.shellAnswers | not then "la barre et les menus ne répondent pas" else empty end),
+        (if .diva.pluginEnabled | not then "Diva n'\''est pas activée dans Omarchy" else empty end),
+        (if .diva.settingsReadable | not then "le fichier de réglages de Diva est illisible" else empty end),
+        (if .diva.shortcutsReadable | not then "le fichier des raccourcis appris est illisible" else empty end)
+      ])}'
+}
+
+# What must be true for a repair to have worked.
+verified() {
+  local i
+  i=$(inspect)
+  case "$1" in
+  unmute) jq -e '.sound.muted | not' <<<"$i" ;;
+  raise-volume) jq -e '.sound.volume >= 10' <<<"$i" ;;
+  restart-audio) jq -e '.sound.servicesRunning and .sound.output != ""' <<<"$i" ;;
+  wifi-on) jq -e '.network.wifiOn' <<<"$i" ;;
+  restart-wifi) jq -e '.network.wifiOn and .network.network != ""' <<<"$i" ;;
+  bluetooth-on | restart-bluetooth) jq -e '.bluetooth.on' <<<"$i" ;;
+  restart-shell | rescan-plugins) jq -e '.diva.shellAnswers and .diva.pluginEnabled' <<<"$i" ;;
+  reset-settings) jq -e '.diva.settingsReadable' <<<"$i" ;;
+  reset-learned) jq -e '.diva.shortcutsReadable' <<<"$i" ;;
+  *) false ;;
+  esac >/dev/null 2>&1
+}
+
+# No more than four repairs in ten minutes, whoever asks: a stuck loop must
+# not hammer the machine.
+too_many() {
+  [[ -f $JOURNAL ]] || return 1
+  local since
+  since=$(date -d '10 minutes ago' -Is)
+  (( $(jq -c --arg since "$since" 'select(.at > $since and .undo != "reverted")' "$JOURNAL" 2>/dev/null | wc -l) >= 4 ))
+}
+
+repair() {
+  local id="$1" s sink keep
+  known "$id" || say '{ok: false, error: "unknown"}'
+  too_many && say '{ok: false, error: "too-many", message: "quatre réparations en dix minutes, je m'\''arrête là"}'
+  s=$(state)
+  sink=$(omarchy-audio-output-sink 2>/dev/null || true)
+  case "$id" in
+  unmute)
+    journal "$id" "$(jq -r 'if .muted then "mute" else "" end' <<<"$s")" "muted was $(jq -r .muted <<<"$s")"
+    [[ -n $sink ]] && pactl set-sink-mute "$sink" 0
+    ;;
+  raise-volume)
+    journal "$id" "volume:$(jq -r .volume <<<"$s")" "volume was $(jq -r .volume <<<"$s")"
+    (( $(jq -r '.volume // 0' <<<"$s") < 10 )) && [[ -n $sink ]] && pactl set-sink-volume "$sink" 40%
+    ;;
+  restart-audio)
+    journal "$id" "" "restarted pipewire"
+    omarchy-restart-audio >/dev/null 2>&1
+    ;;
+  wifi-on)
+    journal "$id" "$(jq -r 'if .wifi then "" else "wifi-off" end' <<<"$s")" "wifi was $(jq -r .wifi <<<"$s")"
+    nmcli radio wifi on >/dev/null 2>&1
+    sleep 4
+    ;;
+  restart-wifi)
+    journal "$id" "" "wifi off and on again"
+    nmcli radio wifi off >/dev/null 2>&1
+    sleep 2
+    omarchy-restart-wifi >/dev/null 2>&1
+    sleep 8
+    ;;
+  bluetooth-on)
+    journal "$id" "$(jq -r 'if .bluetooth then "" else "bluetooth-off" end' <<<"$s")" "bluetooth was $(jq -r .bluetooth <<<"$s")"
+    omarchy-bluetooth-power on >/dev/null 2>&1
+    sleep 2
+    ;;
+  restart-bluetooth)
+    journal "$id" "" "bluetooth off and on again"
+    omarchy-bluetooth-power off >/dev/null 2>&1
+    sleep 2
+    omarchy-restart-bluetooth >/dev/null 2>&1
+    omarchy-bluetooth-power on >/dev/null 2>&1
+    sleep 3
+    ;;
+  restart-shell)
+    journal "$id" "" "restarted omarchy-shell"
+    # Detached: the shell this was started from is about to go away.
+    setsid -f omarchy-restart-shell >/dev/null 2>&1
+    sleep 5
+    ;;
+  rescan-plugins)
+    journal "$id" "" "rescanned plugins"
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1
+    sleep 1
+    ;;
+  reset-settings | reset-learned)
+    local file="$CONFIG" fresh='{ "name": "", "animations": true, "ai": { "enabled": true, "provider": "claude" } }'
+    [[ $id == reset-learned ]] && file="$LEARNED" && fresh='[]'
+    # Only a file that cannot be read is replaced; a readable one is hers.
+    if valid_json "$file" && [[ -e $file ]]; then
+      say '{ok: true, applied: false, message: "le fichier est lisible, je n'\''y touche pas"}'
+    fi
+    keep="$file.broken.$(date +%Y%m%d-%H%M%S)"
+    [[ -e $file ]] && cp -p "$file" "$keep"
+    mkdir -p "$(dirname "$file")"
+    printf '%s\n' "$fresh" >"$file"
+    journal "$id" "restore:$keep:$file" "kept the old file as $keep"
+    ;;
+  esac
+  say '{ok: true, applied: true}'
+}
+
+undo() {
+  [[ -f $JOURNAL ]] || say '{ok: false, error: "nothing"}'
+  local line how sink
+  line=$(jq -c 'select(.undo != "" and .undo != "reverted")' "$JOURNAL" 2>/dev/null | tail -n1)
+  [[ -n $line ]] || say '{ok: false, error: "nothing"}'
+  how=$(jq -r .undo <<<"$line")
+  sink=$(omarchy-audio-output-sink 2>/dev/null || true)
+  case "$how" in
+  mute) [[ -n $sink ]] && pactl set-sink-mute "$sink" 1 ;;
+  volume:*) [[ ${how#volume:} =~ ^[0-9]{1,3}$ && -n $sink ]] && pactl set-sink-volume "$sink" "${how#volume:}%" ;;
+  wifi-off) nmcli radio wifi off >/dev/null 2>&1 ;;
+  bluetooth-off) omarchy-bluetooth-power off >/dev/null 2>&1 ;;
+  restore:*)
+    local from to
+    from=$(cut -d: -f2 <<<"$how")
+    to=$(cut -d: -f3 <<<"$how")
+    [[ -f $from && ($to == "$CONFIG" || $to == "$LEARNED") ]] && cp -p "$from" "$to"
+    ;;
+  *) say '{ok: false, error: "nothing"}' ;;
+  esac
+  jq -nc --arg at "$(date -Is)" --arg repair "$(jq -r .repair <<<"$line")" \
+    '{at: $at, repair: ("undo " + $repair), undo: "reverted", note: "reverted"}' >>"$JOURNAL"
+  # The entry itself can only be undone once.
+  local tmp
+  tmp=$(mktemp "$JOURNAL.XXXXXX")
+  jq -c --arg at "$(jq -r .at <<<"$line")" 'if .at == $at then .undo = "reverted" else . end' "$JOURNAL" >"$tmp" && mv "$tmp" "$JOURNAL"
+  say --arg repair "$(jq -r .repair <<<"$line")" '{ok: true, undone: $repair}'
+}
+
+# A diagnostic for the person who maintains the pack: what was asked, what
+# was found and tried, versions and recent errors. Bugs in Diva's own code
+# are fixed in the repository and arrive with a normal update, never by
+# editing the installed files.
+report() {
+  local dir="$STATE_DIR/reports" file version
+  mkdir -p "$dir"
+  file="$dir/diva-$(date +%Y%m%d-%H%M%S).md"
+  version=$(jq -r '.version // "?"' "$here/../manifest.json" 2>/dev/null)
+  {
+    echo "# Diva diagnostic"
+    echo
+    echo "- When: $(date -Is)"
+    echo "- Diva: $version (installed from commit $(jq -r '.commit // "?"' "$STATE_DIR/install.json" 2>/dev/null | cut -c1-7))"
+    echo "- Omarchy: $(omarchy version 2>/dev/null || echo '?')"
+    echo "- Hyprland: $(hyprctl version 2>/dev/null | head -n1)"
+    echo
+    echo "## What happened"
+    echo
+    printf '%s\n' "${1:-No description.}"
+    echo
+    echo "## State"
+    echo
+    echo '```json'
+    inspect | jq .
+    echo '```'
+    echo
+    echo "## Repairs tried (journal, last 10)"
+    echo
+    echo '```'
+    tail -n 10 "$JOURNAL" 2>/dev/null || echo "none"
+    echo '```'
+    echo
+    echo "## Recent shell warnings mentioning Diva"
+    echo
+    echo '```'
+    qs log 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -iE 'WARN|ERROR' | grep -iE 'diva' | tail -n 20
+    echo '```'
+  } >"$file"
+  say --arg file "$file" '{ok: true, file: $file}'
+}
+
+case "${1:-}" in
+list) jq -c . <<<"$REPAIRS" ;;
+inspect) inspect ;;
+repair) repair "${2:-}" ;;
+verify)
+  known "${2:-}" || say '{ok: false, error: "unknown"}'
+  if verified "$2"; then say '{ok: true}'; else say '{ok: false}'; fi
+  ;;
+undo) undo ;;
+report) report "${2:-}" ;;
+*)
+  echo "usage: diva-doctor list|inspect|repair <id>|verify <id>|undo|report <text>" >&2
+  exit 2
+  ;;
+esac

@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "name": "diva",
-  "version": "0.9.0",
+  "version": "0.13.0",
   "testedOmarchy": "4.0.4",
   "modules": {
     "theme": {
       "owner": "diva",
-      "source": "theme/diva",
-      "target": "~/.config/omarchy/themes/diva",
-      "why": "The desktop's colours and wallpapers, plus shell.toml: a translucent bar, popups and notifications, a slightly larger type scale, and a rose-rimmed lock field"
+      "source": "theme/*",
+      "target": "~/.config/omarchy/themes/<name>",
+      "why": "Six Omarchy themes (diva, diva-lavande, diva-menthe, diva-peche, diva-creme, diva-minuit), each with its colours, wallpapers and a glass shell.toml"
     },
     "menu": {
       "owner": "diva",
@@ -21,6 +21,12 @@
       "source": "hypr/diva.lua",
       "target": "~/.config/hypr/diva.lua",
       "why": "Rounded, softly translucent windows, macOS-like touchpad behaviour, glass blur for Diva and the bar, and desktop-wide motion, loaded by one marked require() line in hyprland.lua"
+    },
+    "screensaver": {
+      "owner": "diva",
+      "source": "branding/screensaver.txt",
+      "target": "~/.config/omarchy/branding/screensaver.txt",
+      "why": "Diva's logo for the screensaver; her own runner (plugin/bin/diva-screensaver) replaces Omarchy's effects"
     }
   },
   "dependencies": {},
@@ -32,10 +38,10 @@
       "why": "The rounded typeface of Diva's menu"
     },
     "wallpapers": {
-      "path": "theme/diva/backgrounds",
+      "path": "theme/*/backgrounds",
       "license": "Public domain / CC0, per image",
-      "credits": "theme/diva/backgrounds/CREDITS.md",
-      "why": "Nine dusk-toned wallpapers to choose from"
+      "credits": "theme/*/backgrounds/CREDITS.md",
+      "why": "Twenty-six wallpapers across six themes: photographs, paintings, prints and space"
     }
   },
   "optional": {

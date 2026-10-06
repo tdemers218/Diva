@@ -43,6 +43,8 @@ brightness=$(brightnessctl -m 2>/dev/null | head -n1 | cut -d, -f4 | tr -d '%')
 wifi=false
 [[ $(nmcli radio wifi 2>/dev/null) == enabled ]] && wifi=true
 network=$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2 ~ /wireless/ { print $1; exit }')
+nightlight=$(omarchy-toggle-nightlight --status 2>/dev/null | jq -r ' .enabled // false' 2>/dev/null || echo false)
+[[ $nightlight == true ]] || nightlight=false
 bluetooth=false
 omarchy-bluetooth-power is-on >/dev/null 2>&1 && bluetooth=true
 
@@ -55,9 +57,22 @@ for supply in /sys/class/power_supply/BAT*; do
   break
 done
 
+# How long the battery should last at the recent pace, and how hard Diva is
+# saving (bin/diva-power): 0 none .. 3 low power mode.
+minutes=-1
+if [[ $charging == false && -n $battery ]]; then
+  left=$(upower -i "$(upower -e 2>/dev/null | grep -m1 -i BAT)" 2>/dev/null | awk '/time to empty:/ { print $4, $5; exit }')
+  case "$left" in
+  *hours) minutes=$(awk '{ print int($1 * 60) }' <<<"$left") ;;
+  *minutes) minutes=$(awk '{ print int($1) }' <<<"$left") ;;
+  esac
+fi
+saving=$(jq -r '.level // 0' "${XDG_STATE_HOME:-$HOME/.local/state}/diva/power.json" 2>/dev/null || echo 0)
+
 jq -nc --arg volume "${volume:-0}" --arg brightness "${brightness:-}" --arg network "${network:-}" \
-  --arg battery "${battery:-}" --argjson charging "$charging" \
-  --argjson muted "$muted" --argjson wifi "$wifi" --argjson bluetooth "$bluetooth" \
+  --arg battery "${battery:-}" --argjson charging "$charging" --arg minutes "$minutes" --arg saving "${saving:-0}" \
+  --argjson muted "$muted" --argjson wifi "$wifi" --argjson bluetooth "$bluetooth" --argjson nightlight "$nightlight" \
   '{volume: ($volume | tonumber? // 0), muted: $muted, brightness: ($brightness | tonumber? // -1),
-    wifi: $wifi, network: $network, bluetooth: $bluetooth,
-    battery: ($battery | tonumber? // -1), charging: $charging}'
+    wifi: $wifi, network: $network, bluetooth: $bluetooth, nightlight: $nightlight,
+    battery: ($battery | tonumber? // -1), charging: $charging,
+    minutes: ($minutes | tonumber? // -1), saving: ($saving | tonumber? // 0)}'

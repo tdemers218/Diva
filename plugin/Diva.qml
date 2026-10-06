@@ -55,6 +55,19 @@ Item {
   property var aiStatus: ({ provider: "claude", cli: true, loggedIn: false, plan: "", claude: ({}), chatgpt: ({}), anthropic: ({}) })
   property bool keyStored: false
   property string settingsStatus: ""
+  // The request the assistant is working on, across its steps:
+  // { request, level: "daily" | "deep", escalated, repairs, attempts, inspect, reason }.
+  property var task: null
+  // What Diva is really doing right now: "", "inspect", "repair", "test".
+  property string phase: ""
+  // Her little terminal: the last steps of the task, one line each.
+  property var steps: []
+  // A shortcut waiting for its action to be verified before it is learned.
+  property var pendingLearn: null
+  // What the running action will say once it is checked.
+  property var running: null
+  readonly property bool deep: task !== null && task.level === "deep"
+  readonly property bool busy: thinking || phase !== ""
   // The conversation with her assistant: [{ who: "me" | "diva", text }].
   property var chat: []
 
@@ -70,8 +83,21 @@ Item {
   property var windows: []
   // Omarchy's live key bindings, { description: keys }, for Diva's guide.
   property var bindings: ({})
+  // Diva's themes, as the settings show them. Each is an Omarchy theme the
+  // pack installs (theme/<id>), with its own colours and wallpapers.
+  readonly property var themes: [
+    { id: "diva", name: "Prune", mood: "Sombre, vieux rose", background: "#241a24", foreground: "#ecd9e3", accent: "#e39ab8" },
+    { id: "diva-lavande", name: "Lavande", mood: "Nuit mauve", background: "#1d1a2e", foreground: "#e4def5", accent: "#b8a4ee" },
+    { id: "diva-menthe", name: "Menthe", mood: "Bleu-vert et rose", background: "#14222a", foreground: "#dcefe9", accent: "#8fd6c4" },
+    { id: "diva-peche", name: "Pêche", mood: "Chaud, cacao", background: "#2a1e1b", foreground: "#f4e3d7", accent: "#f2a889" },
+    { id: "diva-creme", name: "Crème", mood: "Clair et doux", background: "#f6ece6", foreground: "#54404a", accent: "#b85c7e" },
+    { id: "diva-minuit", name: "Minuit", mood: "Noir et rose vif", background: "#131016", foreground: "#f1e6f0", accent: "#ff6fae" }
+  ]
+  // The Omarchy theme in use (its folder name).
+  property string theme: ""
   // What bin/diva-state reports, for the control centre.
-  property var state: ({ volume: 0, muted: false, brightness: -1, wifi: false, network: "", bluetooth: false, battery: -1, charging: false })
+  property var state: ({ volume: 0, muted: false, brightness: -1, wifi: false, network: "", bluetooth: false, battery: -1, charging: false,
+                         minutes: -1, saving: 0 })
   property var pendingControl: null
 
   // Diva's presence: where the pointer is relative to her, and her mood.
@@ -119,7 +145,8 @@ Item {
   readonly property int cardPadding: Style.space(26)
 
   readonly property string mood: {
-    if (thinking) return "thinking"
+    if (deep && busy) return "focus"
+    if (thinking || phase !== "") return "thinking"
     if (flash) return flash
     if (reply !== "" || answer !== "") return "happy"
     if (sleepy) return "sleepy"
@@ -135,10 +162,17 @@ Item {
   }
   // What Diva is saying right now.
   readonly property string hint: {
-    if (thinking) return "Je réfléchis" + "...".slice(0, dots)
+    if (phase === "inspect") return "Je vérifie" + "...".slice(0, dots)
+    if (phase === "repair") return "Je m'en occupe" + "...".slice(0, dots)
+    if (phase === "test") return "Je teste" + "...".slice(0, dots)
+    if (thinking) return (deep ? "Je mets mes lunettes et je regarde ça de près" : "Je réfléchis") + "...".slice(0, dots)
     if (reply) return reply
     if (answer) return answer
     if (sleepy) return "Zzz…"
+    if (page === "network") return "Choisis ton réseau. Je reste ici pendant la connexion."
+    if (page === "bluetooth") return "Retrouvons tes écouteurs ou un autre appareil."
+    if (page === "audio") return "Le son et le micro, comme tu les veux."
+    if (page === "appearance") return "Un peu de lumière, et un fond qui te plaît."
     if (page === "settings") return "Mes réglages. Dis-moi ce qu'on change."
     if (page === "plugins") return "Les extensions d'Omarchy. Regarde, il y en a pour tout."
     if (chatting) return "Je t'écoute. Échap pour arrêter de discuter."
@@ -151,7 +185,7 @@ Item {
     if (query) return "Appuie sur Entrée ou clique."
     // She mentions a low battery before being asked.
     if (state.battery >= 0 && state.battery <= 20 && !state.charging)
-      return greeting + " Au fait, il ne te reste que " + state.battery + " % de batterie, pense à la brancher."
+      return greeting + " Au fait, il ne te reste que " + state.battery + " % de batterie : j'économise, pense à la brancher."
     return greeting + " Qu'est-ce que tu veux faire ?"
   }
 
@@ -279,7 +313,7 @@ Item {
   }
 
   function activateTile(tile) {
-    if (!tile || root.thinking) return
+    if (!tile || root.busy) return
     root.touched()
     if (tile.kind === "ai") { root.askAi(root.query); return }
     if (tile.kind === "setting" && tile.page) { root.page = tile.page; return }
@@ -291,6 +325,11 @@ Item {
       replyTimer.stop()
       return
     }
+    if (tile.kind === "action" && Actions.byId(tile.id).effect.type === "page") {
+      root.chat = []; root.task = null; root.pendingLearn = null
+      root.page = Actions.byId(tile.id).effect.page
+      return
+    }
     if (tile.kind === "action" && Actions.byId(tile.id).effect.type === "group") {
       root.openGroup(Actions.byId(tile.id).effect.group)
       return
@@ -300,10 +339,18 @@ Item {
   }
 
   // Run a tile. `said` is what the assistant answered, when she chose it.
+  // The action goes through bin/diva-run, which reports whether it really
+  // happened: Diva only says so, and only learns a shortcut, once it has.
   function run(tile, said) {
+    if (tile.kind === "action" && Actions.byId(tile.id).effect.type === "page") {
+      root.chat = []; root.task = null; root.pendingLearn = null
+      root.page = Actions.byId(tile.id).effect.page
+      return
+    }
     if (tile.kind === "action" && Actions.byId(tile.id).effect.type === "group") {
       // Her assistant chose "films": show the choice instead of closing.
       root.chat = []
+      root.task = null
       root.openGroup(Actions.byId(tile.id).effect.group)
       root.reply = said
       return
@@ -311,17 +358,64 @@ Item {
     var argv = Smart.argv(tile, root.config, root.dirs, root.pluginDir)
     if (!argv) return
     root.pendingConfirm = ""
-    Quickshell.execDetached(argv)
     var result = Smart.outcome(tile)
-    root.reply = said || result.reply
-    if (result.stay) {
-      if (!said) replyTimer.restart()
-      stateTimer.restart()
-    } else if (said) {
+    if (runner.running) {
+      // Something is still being checked: do this one without the check.
+      Quickshell.execDetached(argv)
+      root.reply = said || result.reply
+      if (result.stay) replyTimer.restart(); else root.dismiss()
+      return
+    }
+    root.running = { tile: tile, said: said, reply: result.reply, stay: result.stay }
+    runner.command = [root.pluginDir + "/bin/diva-run", Smart.check(tile), "--"].concat(argv)
+    runner.running = true
+    if (result.stay) return
+    if (said) {
       // Leave her answer on screen for a moment before making way.
+      root.reply = said
       closeTimer.restart()
     } else {
       root.dismiss()
+    }
+  }
+
+  // bin/diva-run has checked the action that was running.
+  function ran(text) {
+    var done = root.running
+    root.running = null
+    if (!done) return
+    var r = null
+    try { r = JSON.parse(String(text).trim()) } catch (e) { r = null }
+    var ok = !r || r.ok !== false
+    var verified = !!r && r.verified === true
+    if (ok && verified && root.pendingLearn && root.pendingLearn.tile === done.tile)
+      root.learn(root.pendingLearn.text, done.tile)
+    root.pendingLearn = null
+    if (ok) {
+      if (done.stay) {
+        root.reply = done.said || done.reply
+        if (!done.said) replyTimer.restart()
+        stateTimer.restart()
+      }
+      if (root.task) root.task = null
+      return
+    }
+    // It did not happen. Say so, here if she can still see it, otherwise as
+    // a notification; and let the assistant have another look, once.
+    root.flash = "sad"
+    flashTimer.restart()
+    if (root.task && !root.task.escalated && root.aiEnabled) {
+      closeTimer.stop()
+      root.task.attempts.push({ tried: done.tile.title, ok: false, detail: r.detail || "" })
+      root.escalate("« " + done.tile.title + " » n'a pas marché : " + (r.detail || "aucun effet constaté"))
+      return
+    }
+    root.task = null
+    if (root.opened) {
+      closeTimer.stop()
+      root.reply = "Hmm, « " + done.tile.title + " » n'a pas marché."
+    } else {
+      Quickshell.execDetached(["omarchy-notification-send", "Diva", "Je n'ai pas réussi : " + done.tile.title + "."])
     }
   }
 
@@ -376,6 +470,17 @@ Item {
     root.near = Math.max(0, Math.min(1, 1 - (Math.sqrt(dx * dx + dy * dy) - avatar.width / 2) / Style.space(110)))
     root.lastPointer = Date.now()
     root.touched()
+    // A pointer shaken close to her is a caress.
+    if (root.near > 0.15) petting.feed(x); else petting.forget()
+  }
+
+  readonly property var purrs: ["Mmh, encore.", "Hi hi, c'est doux.", "J'adore ça.", "Tu vas me faire ronronner.", "Encore un peu ?"]
+  function petted() {
+    root.touched()
+    avatar.pet()
+    root.flash = "love"
+    flashTimer.restart()
+    root.say(root.purrs[Math.floor(Math.random() * root.purrs.length)])
   }
 
   readonly property var quips: [
@@ -395,42 +500,98 @@ Item {
 
   // ------------------------------------------------------------ assistant
 
+  // A new request for the assistant: it starts at her everyday level.
   function askAi(text) {
     text = String(text || "").trim()
-    if (!text || root.thinking) return
+    if (!text || root.busy) return
     root.aiMode = "ask"
     root.asked = text
     root.reply = ""
-    var before = root.chat
-    root.chat = before.concat([{ who: "me", text: text }])
+    root.steps = []
+    root.task = { request: text, level: "daily", escalated: false, repairs: 0, attempts: [], inspect: null, reason: "",
+                  history: root.chat.slice(-8) }
+    root.chat = root.chat.concat([{ who: "me", text: text }])
     input.text = ""
     root.query = ""
-    root.thinking = true
-    aiProcess.command = [root.pluginDir + "/bin/diva-ai", JSON.stringify({
-      request: text,
-      history: before.slice(-8),
-      guide: Smart.guideLines(root.bindings),
-      actions: Actions.ACTIONS.map(function(a) { return { id: a.id, title: a.title } }),
-      apps: root.apps.slice(0, 80).map(function(a) { return a.name })
-    })]
-    aiProcess.running = true
+    root.callModel()
     Qt.callLater(function() { talk.positionViewAtEnd() })
   }
 
-  function cancelThinking() {
-    if (!root.thinking) return
+  // Ask the model at the task's level, with everything known so far. The
+  // troubleshooting skill travels with the request once a state was checked.
+  function callModel() {
+    var t = root.task
+    if (!t) return
+    var payload = {
+      request: t.request,
+      level: t.level,
+      history: t.history,
+      guide: Smart.guideLines(root.bindings),
+      actions: Actions.ACTIONS.map(function(a) { return { id: a.id, title: a.title } }),
+      apps: root.apps.slice(0, 80).map(function(a) { return a.name })
+    }
+    if (t.inspect || t.attempts.length || t.reason)
+      payload.context = { inspect: t.inspect || {}, attempts: t.attempts, reason: t.reason }
+    root.phase = ""
+    root.thinking = true
+    aiProcess.command = [root.pluginDir + "/bin/diva-ai", JSON.stringify(payload)]
+    aiProcess.running = true
+  }
+
+  function step(text) {
+    root.steps = root.steps.concat([text]).slice(-4)
+  }
+
+  // Hand the task to the stronger model, once, with what was tried so far.
+  // Her glasses change the model and nothing else: the same checks apply.
+  function escalate(reason) {
+    var t = root.task
+    if (!t || t.escalated) return false
+    t.escalated = true
+    t.level = "deep"
+    t.reason = reason
+    root.task = t
+    root.taskChanged()
+    root.step("lunettes : " + reason)
+    root.callModel()
+    return true
+  }
+
+  // Stop whatever she is doing.
+  function stop() {
     root.thinking = false
+    root.phase = ""
     aiProcess.running = false
+    doctor.running = false
+    root.task = null
+    root.pendingLearn = null
+    root.reply = "D'accord, j'arrête."
+    replyTimer.restart()
+  }
+
+  function cancelThinking() {
+    if (!root.busy) return
+    root.thinking = false
+    root.phase = ""
+    aiProcess.running = false
+    doctor.running = false
+    root.task = null
   }
 
   function aiError(code) {
-    if (code === "login") return "Je ne suis pas encore connectée à ton compte Claude. Ouvre mes réglages."
-    if (code === "cli") return "Il me manque Claude Code sur cet ordinateur. Ouvre mes réglages."
+    if (code === "login") return "Je ne suis pas encore connectée à ton compte. Ouvre mes réglages."
+    if (code === "cli") return "Il me manque l'outil de mon abonnement sur cet ordinateur. Ouvre mes réglages."
     if (code === "key") return "Il me manque une clé. Ouvre mes réglages."
     if (code === "network") return "Je n'arrive pas à me connecter à Internet."
     if (code === "busy") return "Il y a trop de monde, réessaie dans un instant."
     if (code === "refused") return "Ça, je ne peux pas t'aider."
     return "Oups, je n'ai pas réussi cette fois."
+  }
+
+  function answerInChat(said) {
+    root.chat = root.chat.concat([{ who: "diva", text: said }])
+    root.reply = said
+    Qt.callLater(function() { talk.positionViewAtEnd() })
   }
 
   function aiDone(text) {
@@ -446,15 +607,46 @@ Item {
       root.reply = root.aiError(r ? r.error : "")
       root.flash = "sad"
       flashTimer.restart()
+      root.task = null
       return
     }
+    var t = root.task
     var said = String(r.reply || "").trim() || "Je ne sais pas trop."
-    root.chat = root.chat.concat([{ who: "diva", text: said }])
-    root.reply = said
-    Qt.callLater(function() { talk.positionViewAtEnd() })
-    var tile = Smart.intentTile(r.intent, root.apps)
-    if (!tile) return
-    root.learn(root.asked, tile)
+    var intent = r.intent || ({})
+
+    // The everyday model may ask for the glasses, with a reason; once.
+    if (r.escalate && t && !t.escalated && root.escalate(String(r.reason || "la demande est délicate"))) return
+
+    if (intent.type === "diagnose" && t && !t.inspect) {
+      // She does not guess: look first, then ask again with what was found.
+      root.answerInChat(said)
+      root.phase = "inspect"
+      root.step("vérification de l'ordinateur")
+      doctor.todo = "inspect"
+      doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect"]
+      doctor.running = true
+      return
+    }
+    if (intent.type === "repair" && t && t.inspect) {
+      // Two repairs at most for one request.
+      if (t.repairs >= 2) { root.giveUp(); return }
+      t.repairs += 1
+      t.pending = String(intent.id || "")
+      t.said = said
+      root.answerInChat(said)
+      root.phase = "repair"
+      root.step("réparation : " + t.pending)
+      doctor.todo = "repair"
+      doctor.command = [root.pluginDir + "/bin/diva-doctor", "repair", t.pending]
+      doctor.running = true
+      return
+    }
+
+    root.answerInChat(said)
+    var tile = Smart.intentTile(intent, root.apps)
+    if (!tile) { root.task = null; return }
+    // Learned only once the action is seen to have worked (see `ran`).
+    root.pendingLearn = { text: root.asked, tile: tile }
     if (root.needsConfirm(tile)) {
       // Show what is waiting for her second click.
       root.chat = []
@@ -466,6 +658,82 @@ Item {
       return
     }
     root.run(tile, said)
+  }
+
+  // bin/diva-doctor finished a step of the task.
+  function doctored(what, text) {
+    var t = root.task
+    if (!t) { root.phase = ""; return }
+    var r = null
+    try { r = JSON.parse(String(text).trim()) } catch (e) { r = null }
+    if (what === "inspect") {
+      t.inspect = r || ({ problems: ["je n'ai pas réussi à lire l'état de l'ordinateur"] })
+      var found = (t.inspect.problems || []).length
+      root.step(found ? found + " anomalie" + (found > 1 ? "s" : "") + " trouvée" + (found > 1 ? "s" : "") : "rien d'anormal trouvé")
+      // Several things wrong at once is a job for the glasses.
+      if (found >= 2 && !t.escalated) { root.phase = ""; root.escalate("plusieurs anomalies à la fois"); return }
+      root.callModel()
+    } else if (what === "repair") {
+      if (!r || r.ok !== true) {
+        t.attempts.push({ repair: t.pending, ok: false, detail: (r && (r.message || r.error)) || "la réparation n'a pas pu être lancée" })
+        root.phase = ""
+        root.giveUp()
+        return
+      }
+      root.phase = "test"
+      root.step("test du résultat")
+      doctor.todo = "verify"
+      doctor.command = [root.pluginDir + "/bin/diva-doctor", "verify", t.pending]
+      doctor.running = true
+    } else if (what === "verify") {
+      var ok = !!r && r.ok === true
+      t.attempts.push({ repair: t.pending, ok: ok })
+      root.phase = ""
+      root.step(ok ? "réparé" : "toujours en panne")
+      if (ok) {
+        // Fixed. Look again: there may have been more than one thing wrong.
+        root.phase = "inspect"
+        doctor.todo = "recheck"
+        doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect"]
+        doctor.running = true
+      } else if (!root.escalate("la réparation « " + t.pending + " » n'a pas suffi")) {
+        // Already on her glasses: one more look, within the repair limit.
+        root.callModel()
+      }
+    } else if (what === "recheck") {
+      root.phase = ""
+      var left = r && r.problems ? r.problems.length : 0
+      if (left > 0 && t.repairs < 2) {
+        // Something else is still wrong, and there is a repair left to spend.
+        t.inspect = r
+        root.step("encore " + left + " anomalie" + (left > 1 ? "s" : ""))
+        root.callModel()
+        return
+      }
+      root.task = null
+      root.flash = "love"
+      flashTimer.restart()
+      root.answerInChat(left > 0 ? "J'ai réparé ce que je pouvais, mais il reste un souci : " + r.problems[0] + "."
+                                 : "Et voilà, j'ai vérifié : tout est réparé.")
+      stateTimer.restart()
+    } else if (what === "report") {
+      root.phase = ""
+      root.task = null
+      root.answerInChat("Je n'y arrive pas toute seule, et ce n'est pas toi qui as cassé quelque chose. " +
+                        "J'ai noté tout ce que j'ai essayé dans un rapport pour la personne qui s'occupe de l'ordinateur.")
+      if (r && r.file) root.step("rapport : " + r.file)
+    }
+  }
+
+  // Out of attempts: write the diagnostic and say so plainly.
+  function giveUp() {
+    var t = root.task
+    root.phase = "inspect"
+    root.step("préparation d'un rapport")
+    doctor.todo = "report"
+    doctor.command = [root.pluginDir + "/bin/diva-doctor", "report",
+      "Demande : " + (t ? t.request : "") + "\nEssais : " + JSON.stringify(t ? t.attempts : [])]
+    doctor.running = true
   }
 
   // Remember what a request turned out to mean, so next time it is answered
@@ -508,7 +776,7 @@ Item {
   }
 
   function testAi() {
-    if (root.thinking) return
+    if (root.busy) return
     root.aiMode = "test"
     root.settingsStatus = "Je vérifie…"
     root.thinking = true
@@ -532,6 +800,19 @@ Item {
     root.setSetting(["ai", "models", provider], id)
     root.settingsStatus = ""
     recheck.restart()
+  }
+
+  // Switch the whole desktop to one of her themes.
+  function setTheme(id) {
+    if (!root.themes.some(function(t) { return t.id === id })) return
+    root.theme = id
+    Quickshell.execDetached(["omarchy-theme-set", id])
+  }
+
+  // "auto", "always" or "off"; applied at once rather than at the next tick.
+  function setPowerMode(mode) {
+    root.setSetting(["power", "mode"], mode)
+    powerNow.restart()
   }
 
   function checkAi() {
@@ -581,7 +862,8 @@ Item {
     return JSON.stringify({ opened: root.opened, page: root.page, group: root.group, query: root.query, hint: root.hint,
       selected: root.selected, mood: root.mood, lookX: root.lookX, lookY: root.lookY, near: root.near, sleepy: root.sleepy,
       font: root.fontFamily, voice: root.voiceFamily, dirs: root.dirs, config: root.config, state: root.state,
-      pendingConfirm: root.pendingConfirm, thinking: root.thinking, aiEnabled: root.aiEnabled, aiStatus: root.aiStatus,
+      pendingConfirm: root.pendingConfirm, thinking: root.thinking, phase: root.phase, deep: root.deep, steps: root.steps,
+      task: root.task ? { level: root.task.level, escalated: root.task.escalated, repairs: root.task.repairs, attempts: root.task.attempts } : null, aiEnabled: root.aiEnabled, aiStatus: root.aiStatus,
       chat: root.chat, learned: root.learned.length, windows: root.windows.length, bindings: Object.keys(root.bindings).length, commands: root.commands.length, keyStored: root.keyStored,
       settingsStatus: root.settingsStatus,
       sections: root.sections.map(function(x) { return x.id + "(" + x.tiles.length + ")" }),
@@ -589,6 +871,8 @@ Item {
   }
 
   onPageChanged: if (page === "settings") root.checkAi()
+
+  PetDetector { id: petting; onPetted: root.petted() }
 
   FontLoader {
     id: fredoka
@@ -602,8 +886,13 @@ Item {
   Timer { id: pokeReset; interval: 2500; onTriggered: root.pokes = 0 }
   // After a setting is written, ask the helper again who is signed in.
   Timer { id: recheck; interval: 300; onTriggered: root.checkAi() }
+  Timer {
+    id: powerNow
+    interval: 400
+    onTriggered: { Quickshell.execDetached([root.pluginDir + "/bin/diva-power", "apply"]); stateTimer.restart() }
+  }
   Timer { id: stateTimer; interval: 350; onTriggered: root.control("", "") }
-  Timer { interval: 350; repeat: true; running: root.thinking; onTriggered: root.dots = root.dots % 3 + 1 }
+  Timer { interval: 350; repeat: true; running: root.busy; onTriggered: root.dots = root.dots % 3 + 1 }
   // While she is open: refresh the control centre, doze off when nothing
   // happens, and glance around when the pointer is still.
   Timer {
@@ -624,6 +913,13 @@ Item {
   }
   Timer { id: glanceBack; interval: 1100; onTriggered: if (Date.now() - root.lastPointer > 4000) { root.lookX = 0; root.lookY = 0 } }
 
+  FileView {
+    path: root.home + "/.local/state/omarchy/current/theme.name"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.theme = String(text()).trim()
+  }
   FileView {
     id: menuDefaults
     path: root.omarchyPath + "/default/omarchy/omarchy-menu.jsonc"
@@ -668,6 +964,23 @@ Item {
   Process {
     id: aiProcess
     stdout: StdioCollector { onStreamFinished: root.aiDone(text) }
+  }
+  Process {
+    id: runner
+    stdout: StdioCollector { onStreamFinished: root.ran(text) }
+  }
+  Process {
+    id: doctor
+    property string todo: ""
+    stdout: StdioCollector { onStreamFinished: root.doctored(doctor.todo, text) }
+  }
+  // Applications installed or removed while the menu is up show at once.
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() {
+      root.apps = root.appList()
+      if (root.opened && root.page === "home" && !root.chatting) root.refresh()
+    }
   }
   Process {
     id: statusCheck
@@ -845,6 +1158,7 @@ Item {
                 width: Style.space(92)
                 height: width
                 mood: root.mood
+                glasses: root.deep
                 animate: root.animate && root.opened
                 lookX: root.lookX
                 lookY: root.lookY
@@ -856,33 +1170,22 @@ Item {
                 width: parent.width - avatar.width - parent.spacing - Style.space(110)
                 height: avatar.height
 
-                Rectangle {
+                DivaBubble {
                   id: bubble
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.left: parent.left
-                  anchors.leftMargin: Style.space(8)
-                  width: Math.min(parent.width - Style.space(8), said.implicitWidth + Style.space(36))
+                  side: "left"
+                  width: Math.min(parent.width, said.implicitWidth + Style.space(36) + tail)
                   height: Math.max(Style.space(46), said.implicitHeight + Style.space(24))
                   radius: Style.space(22)
-                  color: Qt.rgba(1, 1, 1, 0.11)
-                  border.width: 1
-                  border.color: root.hairline
+                  tail: Style.space(9)
+                  fill: Qt.rgba(1, 1, 1, 0.11)
+                  line: root.hairline
                   Behavior on width { NumberAnimation { duration: root.ms(180); easing.type: Easing.OutCubic } }
                   Behavior on height { NumberAnimation { duration: root.ms(180); easing.type: Easing.OutCubic } }
 
-                  // The bubble's tail, toward her.
-                  Rectangle {
-                    x: -Style.space(5)
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Style.space(12)
-                    height: width
-                    radius: Style.space(3)
-                    rotation: 45
-                    color: Qt.rgba(1, 1, 1, 0.11)
-                  }
-
                   SequentialAnimation {
-                    running: root.thinking && root.animate
+                    running: root.busy && root.animate
                     loops: Animation.Infinite
                     onStopped: bubble.opacity = 1
                     NumberAnimation { target: bubble; property: "opacity"; to: 0.6; duration: 500; easing.type: Easing.InOutSine }
@@ -892,9 +1195,9 @@ Item {
                   Text {
                     id: said
                     textFormat: Text.PlainText
-                    x: Style.space(18)
+                    x: bubble.bodyX + Style.space(18)
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.min(implicitWidth, bubble.parent.width - Style.space(44))
+                    width: Math.min(implicitWidth, bubble.parent.width - bubble.tail - Style.space(36))
                     text: root.hint
                     color: root.ink
                     font.family: root.voiceFamily
@@ -903,10 +1206,56 @@ Item {
                     maximumLineCount: 5
                     elide: Text.ElideRight
                     // Each new sentence fades in.
-                    onTextChanged: if (!root.thinking) sayIn.restart()
+                    onTextChanged: if (!root.busy) sayIn.restart()
                     NumberAnimation { id: sayIn; target: said; property: "opacity"; from: 0.2; to: 1; duration: root.ms(220) }
                   }
                 }
+              }
+            }
+
+            // Her little terminal: what she is really doing, step by step, and
+            // a way to stop her.
+            Rectangle {
+              id: terminal
+              visible: root.page === "home" && (root.busy || root.steps.length > 0) && (root.chatting || root.busy)
+              width: parent.width
+              height: visible ? lines.implicitHeight + Style.space(20) : 0
+              radius: Style.space(16)
+              color: Qt.rgba(0.09, 0.05, 0.13, 0.7)
+              border.width: 1
+              border.color: Qt.rgba(0.79, 0.69, 0.93, 0.35)
+
+              Column {
+                id: lines
+                x: Style.space(14)
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - stopButton.width - Style.space(40)
+                spacing: Style.space(2)
+                Repeater {
+                  model: root.steps.length ? root.steps : [root.deep ? "réflexion approfondie" : "réflexion"]
+                  Text {
+                    required property string modelData
+                    required property int index
+                    textFormat: Text.PlainText
+                    width: lines.width
+                    text: "› " + modelData
+                    color: index === (root.steps.length || 1) - 1 ? "#e7d5ff" : "#a892c4"
+                    font.family: Style.font.family
+                    font.pixelSize: Style.space(12)
+                    elide: Text.ElideRight
+                  }
+                }
+              }
+              DivaButton {
+                id: stopButton
+                visible: root.busy
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                diva: root
+                glyph: "close"
+                text: "Arrêter"
+                onClicked: root.stop()
               }
             }
 
@@ -958,7 +1307,7 @@ Item {
 
                 Keys.onPressed: function(event) {
                   if (event.key === Qt.Key_Escape) {
-                    if (root.thinking) root.cancelThinking()
+                    if (root.busy) root.stop()
                     else if (root.pendingConfirm) root.cancelConfirm()
                     else if (input.text) { input.text = ""; root.reply = ""; root.refresh() }
                     else if (root.chatting) { root.chat = []; root.reply = ""; root.refresh() }
@@ -1073,8 +1422,8 @@ Item {
               height: Math.max(0, root.page === "plugins"
                 ? card.height - root.cardPadding * 2 - header.height - content.spacing
                 : Math.min(Style.space(430), panel.height - Style.space(56) - root.cardPadding * 2 - header.height - content.spacing))
-              source: root.page === "plugins" ? "PluginsPage.qml" : root.page === "settings" ? "SettingsPage.qml" : ""
-              onLoaded: { item.diva = root; pageIn.restart() }
+              source: root.page === "plugins" ? "PluginsPage.qml" : root.page === "settings" ? "SettingsPage.qml" : "ControlPage.qml"
+              onLoaded: { item.diva = root; if ("section" in item) item.section = Qt.binding(function() { return root.page }); pageIn.restart() }
               // Each page slides up into place.
               transform: Translate { id: pageShift }
               ParallelAnimation {

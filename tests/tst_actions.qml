@@ -68,7 +68,7 @@ TestCase {
     compare(argv("volume-up"), ["omarchy-audio-output-volume", "raise"])
     for (var i = 0; i < Actions.ACTIONS.length; i++) {
       var a = Actions.ACTIONS[i]
-      if (a.effect.type !== "group") verify(argv(a.id).length > 0)
+      if (["group", "page", "screensaver"].indexOf(a.effect.type) < 0) verify(argv(a.id).length > 0)
     }
   }
 
@@ -341,6 +341,10 @@ TestCase {
     ctx.state.charging = true
     compare(Smart.resolve("batterie", ctx).answer, "Il te reste 82 % de batterie, et elle se recharge.")
     compare(Smart.resolve("batterie", { apps: [], now: noon }).answer, "")
+    compare(Smart.resolve("batterie", { apps: [], now: noon, state: { battery: 64, charging: false, minutes: 205 } }).answer,
+            "Il te reste 64 % de batterie, environ 3 h 25 à ce rythme.")
+    compare(Smart.resolve("batterie", { apps: [], now: noon, state: { battery: 9, charging: false, minutes: 18 } }).answer,
+            "Il te reste 9 % de batterie, environ 18 min à ce rythme.")
   }
 
   // ----------------------------------------------------------- navigation
@@ -487,5 +491,28 @@ TestCase {
     Smart.SECTIONS.forEach(function(s) { kindsSeen = kindsSeen.concat(s.kinds) })
     ;["action", "app", "url", "install", "search", "ai", "calc", "help", "window", "winact", "setting", "omarchy", "volume", "brightness", "reminder"]
       .forEach(function(k) { verify(kindsSeen.indexOf(k) >= 0, k) })
+  }
+
+  function test_screensaver_is_hers() {
+    compare(first("écran de veille"), "screensaver")
+    var tile = Actions.tile(Actions.byId("screensaver"), 0)
+    compare(Smart.argv(tile, {}, dirs, "/p"), ["/p/bin/diva-screensaver-launch", "force"])
+    compare(Smart.argv(tile, {}, dirs, ""), null)
+  }
+
+  function test_every_action_names_its_check() {
+    compare(Smart.check(Actions.tile(Actions.byId("volume-up"), 0)), "state:volume:up")
+    compare(Smart.check(Actions.tile(Actions.byId("mute"), 0)), "state:muted:toggle")
+    compare(Smart.check(Actions.tile(Actions.byId("browser"), 0)), "launch")
+    compare(Smart.check(Actions.tile(Actions.byId("lock"), 0)), "none")
+    compare(Smart.check(Smart.levelTile("volume", 40)), "state:volume:=40")
+    compare(Smart.check(Smart.levelTile("brightness", 0)), "state:brightness:=1")
+    compare(Smart.check({ kind: "app", id: "spotify" }), "launch")
+    compare(Smart.check({ kind: "window", id: "0x55bd67b53500" }), "focus:0x55bd67b53500")
+    compare(Smart.check({ kind: "window", id: "0x1; id" }), "none")
+    compare(Smart.check({ kind: "winact", id: "close" }), "closed")
+    compare(Smart.check({ kind: "winact", id: "float" }), "float")
+    compare(Smart.check({ kind: "winact", id: "wider" }), "none")
+    compare(Smart.check({ kind: "help", id: "close" }), "none")
   }
 }

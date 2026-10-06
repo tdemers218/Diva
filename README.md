@@ -2,17 +2,33 @@
 
 An Omarchy plugin pack that girlifies the operating system. Includes **Diva**, a personal girly assistant to make everyday navigation simple.
 
-> **Status: Phase 1 prototype.** The "Implemented so far" section below lists what actually works on the test account. Everything else in this README is still a goal, and the suggested architecture and milestones remain proposals.
+> **Status: working prototype, version 0.13.0.** The "Implemented so far" section below lists what works on the test account, which is the only place it has run. Phases 1 to 3 of the build order are largely in place; voice, release-based updates and the target laptop are not. From "The goal" onward, this README is the original brief, kept as written.
 
 ## Implemented so far
 
 Tested on Omarchy 4.0.4, on the dedicated test account only. See [docs/architecture.md](docs/architecture.md) for verified mechanisms and open questions.
 
-- **Theme** (`theme/diva`): dark plum with dusty-rose accents. Girly, not bright. Nine wallpapers ship with it, all public domain or CC0 ([credits](theme/diva/backgrounds/CREDITS.md)).
-- **Window look** (`hypr/diva.lua`), for someone used to macOS: rounded corners, slightly translucent windows with a light blur (browsers and video stay opaque), soft shadows, natural scrolling, tap to click, three-finger swipes between workspaces, and `SUPER + Q` to close a window. `bin/diva install --no-look` skips it.
+- **Six themes** (`theme/*`), chosen in Diva's settings (gear › Apparence) or by typing "thème". Each is a full Omarchy theme with its own colours, wallpapers and glass bar:
+  - *Prune* (`diva`): dark plum and dusty rose; dusk photographs.
+  - *Lavande*: indigo night with lavender; Monet's mauve water lilies, Webb's Cosmic Cliffs, an aurora.
+  - *Menthe*: deep blue-green with mint and blossom pink; Van Gogh's almond blossom, Monet, a lagoon.
+  - *Pêche*: warm cocoa with peach; Hokusai's Red Fuji and poppies, a Redon bouquet.
+  - *Crème*: the one light theme, warm cream rather than white; Hokusai's irises and Great Wave, white blossom, roses.
+  - *Minuit*: near-black with hot pink; Redon's poppies on black, city lights.
+
+  All 26 wallpapers are public domain or CC0, credited per theme in `theme/<name>/backgrounds/CREDITS.md`.
+- **Window look** (`hypr/diva.lua`), for someone used to macOS: rounded corners, slightly translucent windows with a light blur (browsers and video stay opaque), soft shadows, natural scrolling, tap to click, a scrolling ribbon of full-width windows moved with three fingers, and `SUPER + Q` to close a window. `bin/diva install --no-look` skips it.
 - **Diva's own menu** (`plugin/`), an Omarchy shell plugin, entirely in French, drawn as frosted glass in the manner of recent macOS: a translucent card blurred by the compositor, hairline highlights, large soft corners, one icon set and no emoji.
 - **Diva herself is always there**: a small pink companion robot with a heart on her antenna, beside a speech bubble where everything she says appears. She floats, blinks at uneven moments, follows the pointer with her eyes, blushes and leans in when it comes close, nods as you type, looks curious at a question, pulses while she thinks, dozes off when nothing happens and wakes with a word, and answers a click with a hop, a burst of hearts and a line of her own.
-- **Diva beyond her menu**: her face replaces the heart in the bar (she waves when the bar appears, looks at the pointer and blushes when it is over her), and she sits in the bottom-right corner of the desktop, behind the windows: she says hello a few seconds after the session starts, glances around now and then, dozes between 23 h and 6 h, warns once when the battery drops under 20 %, and opens her menu when clicked. She moves only in short bursts, so an idle desktop stays idle. "Diva sur le bureau" in the settings hides her.
+- **Diva beyond her menu**: her face replaces the heart in the bar (she waves when the bar appears, looks at the pointer and blushes when it is over her), and she sits in the bottom-right corner of the desktop, behind the windows: she says hello a few seconds after the session starts, glances around now and then, dozes between 23 h and 6 h, warns once when the battery drops under 20 %, and opens her menu when clicked. She can be picked up and dropped anywhere on the desktop and remembers the spot (`~/.local/state/diva/companion.json`); her bubble opens on whichever side has room. She moves only in short bursts, so an idle desktop stays idle. "Diva sur le bureau" in the settings hides her.
+- **Petting**: shake the pointer from side to side close to Diva, in her menu, on the desktop or over her face in the bar, and she leans into it, sends up a few hearts and says so ("Mmh, encore."). Four quick changes of direction count; a pointer merely passing by, or resting, does not.
+- **Battery care, in the manner of macOS** (`bin/diva-power`, run every half minute by Diva's desktop service): automatic, quiet, and cutting what shows least first. Plugged in, nothing is held back.
+  1. *On battery*: Diva's own idle motion, window shadows, and one blur pass instead of two.
+  2. *Under 50 % or 2 h 30 left*: blur and window translucency off, the power-saver profile, Bluetooth off if nothing is connected to it, the screen 15 points dimmer if it was bright.
+  3. *Under 20 % or 45 min left* (low power mode): desktop animations off, the screen capped at 40 %, keyboard light off.
+
+  The time left comes from the recent power draw, so a heavy afternoon reaches level 2 sooner than a quiet one. Each cut remembers what was there and is undone only if it is still as Diva left it: a brightness she changed herself stays hers. The control centre shows "Batterie 64 %  ·  environ 3 h 25  ·  j'économise", Diva says a word when she changes level, and the settings offer Automatique / Toujours économiser / Jamais.
+- **Screensaver**: Omarchy's screensaver keeps its idea (text drawn by terminal effects) but becomes Diva's: her name in round letters with a heart dotting the i and sparkles around it, sometimes her face, sometimes both, on deep plum instead of black, in pinks and lilacs. Twenty-three gentle effects draw it (bubbles, fireworks of hearts, petals and flowers falling, bouncing hearts, beams of hearts, pink smoke, waves, rings, swarms, sweeps…), and four scenes are Diva's own: hearts and flowers drifting up either side of her, sparkles twinkling around her, a shimmer of colour through her name, and her face blinking, winking and smiling. None of the "hacker" ones (matrix rain, decryption, binary, glitches) are used. It starts after the idle time Omarchy is set to, can be switched off in Diva's settings, and "écran de veille" starts it on demand.
 - **Motion everywhere** (`hypr/diva.lua`): windows pop in with a small bounce and shrink away, glide when the layout makes room, and cross-fade their rim and dimming on focus; workspaces slide and fade; notifications and reminders slide in from the right; the volume display pops; the scratchpad drops from above. Inside the menu, pages slide up, conversation lines rise into place and extension cards fade in one after another.
 - **Getting around, with Diva's help**:
   - *Finding windows*: typing an application's name or words from a window's title offers the open window first ("Brave Browser, recette de soupe…") before opening the app again. "Mes fenêtres", among the favourites, lists everything open.
@@ -21,7 +37,7 @@ Tested on Omarchy 4.0.4, on the dedicated test account only. See [docs/architect
   - *Settings and shortcuts*: Diva's settings and all of Omarchy's menu by French or English words, and "raccourcis" opens Omarchy's full list.
 - **Results that look like what they do**: what she types is answered in sections, each with its own kind of card, so a result's nature shows before it is read. Open windows are cards with a live preview of the window; things Diva does right now (sound, light, reminders) are wide buttons; applications and sites are app icons; moves for the current window are small pills; settings are list rows showing where they live; tips are a note with the whole text; her assistant and the web are two bars at the end. The most relevant section comes first, Enter runs the best result, and the arrow keys move by what is on screen.
 - **Fuzzy matching**: letters in order are enough (`frfx` finds Firefox, `tlchrgmnt` finds Téléchargements, `brv` finds the open Brave window), for applications, windows, settings and Diva's own actions. An exact beginning always ranks above a fuzzy find.
-- **Home, iOS style**: seven favourites as app icons (Internet, films, fenêtres, fichiers, téléchargements, photos, documents), then a control centre: round switches for Wi-Fi, Bluetooth, silence and night light, sliders for volume and brightness showing the real values, and buttons for sound, wallpaper, lock, restart and shut down. Everything else is found by typing.
+- **Home, iOS style**: favourites as app icons, then a control centre: round switches for Wi-Fi, Bluetooth, silence and night light, sliders for volume and brightness showing the real values, and buttons for sound, wallpaper, lock, restart and shut down. Wi-Fi, Bluetooth, sound and wallpaper each open their own page inside Diva (see "Dock, overview, and native controls" below). Everything else is found by typing.
 - **Conversation**: a question (it ends with "?", starts like one, or is a whole sentence) goes to Diva's assistant first instead of a web search, unless Diva already has the exact answer herself. The answer opens a conversation in the menu; follow-ups keep the thread, Esc leaves it.
 - **Films et séries**: YouTube, Netflix and Stremio. What is installed opens; what is not offers to install the official way, after a confirmation: YouTube and Netflix as Omarchy web apps, Stremio as its official Flathub app, per user and without a password.
 - **Settings inside the menu** (the gear in its corner): her name, the assistant, animations, the wallpaper picker.
@@ -34,6 +50,42 @@ Tested on Omarchy 4.0.4, on the dedicated test account only. See [docs/architect
 - **Learned shortcuts**: what the assistant resolved once is saved in `~/.local/state/diva/learned.json` and answered locally the next time, with no model call. `bin/diva learned` lists and removes them.
 - **Pack manager** (`bin/diva`): install, update, uninstall, status, with backups and state in `~/.local/state/diva/`.
 
+### Dock, overview, and native controls
+
+Diva now keeps Wi-Fi network selection/passwords, Bluetooth devices, audio outputs
+and microphones, app volume, and wallpaper selection inside her own menu. Click
+the Wi-Fi or Bluetooth label, **Son**, or **Fond** to open its Diva page.
+
+The dock beside Diva combines favourite and running apps. Icons grow smoothly as
+the pointer approaches. Click to launch or return to an app; several windows open
+an app-specific overview. Right-click an installed app to pin/unpin it. A long dock
+can be scrolled. Workspace numbers are removed from the bar on installation and
+restored with their settings on uninstall.
+
+- Hold the pointer at the top edge for a quarter second, click **▦** in the dock,
+  or swipe up with four fingers to see the overview.
+- Hover an **Espace** to inspect it, click it to enter, or drag a window preview
+  onto it to move the window. **+** adds an empty space to choose or move into.
+- Click a window to return to it. Arrow keys and Enter also work. Escape or a
+  four-finger downward swipe closes the overview.
+- Three fingers horizontally scroll the window ribbon. Windows open at full
+  width; ask Diva to **mettre deux fenêtres côte à côte** for an explicit pair.
+- Disable the top-edge trigger in **Réglages → Bureau**; the dock and gesture
+  remain available. The existing Animations setting also controls the dock and
+  overview transitions.
+
+The overview zoom animates live window previews in Diva's shell; it does not
+change the compositor's camera. Advanced stock-panel administration tools are
+not reproduced yet, including provisioning a new enterprise Wi-Fi profile.
+Saved enterprise profiles remain usable.
+
+Run `bin/diva install --no-theme` from the desktop to apply these pack changes
+without selecting another theme. `bin/diva test` runs the checks;
+`tests/preview.sh` renders an isolated offscreen preview to
+`/tmp/diva-controls.png` and `/tmp/diva-overview.png`.
+
+### Commands
+
 ```sh
 bin/diva install     # safe to run again
 bin/diva status
@@ -45,50 +97,61 @@ bin/diva ai on       # switch the assistant on (ai off, ai status, ai ask "…")
 bin/diva learned     # list learned shortcuts (learned forget <n>, learned clear)
 ```
 
-Diva takes the place of the Omarchy menu: its button sits first in the bar and `SUPER + SPACE` opens it. The Omarchy menu itself stays enabled behind it (`SUPER + ESCAPE` and the other Omarchy shortcuts still work), because Omarchy's own pickers are drawn by it. Her settings are changed from the menu and stored in `~/.config/diva/config.json`:
+Diva takes the place of the Omarchy menu: its button sits first in the bar and a tap of the Super key opens it. The binding fires when Super is released on its own, so Super shortcuts (`SUPER + W`, `SUPER + 2`…) are unaffected; `SUPER + SPACE` no longer opens anything. The Omarchy menu itself stays enabled behind it (`SUPER + ESCAPE` and the other Omarchy shortcuts still work), because Omarchy's own pickers are drawn by it. Her settings are changed from the menu and stored in `~/.config/diva/config.json`:
 
 ```json
 { "name": "", "animations": true, "advancedSearch": true,
-  "ai": { "enabled": true, "provider": "claude", "models": { "claude": "haiku", "chatgpt": "gpt-6-luna" }, "personality": "" } }
+  "ai": { "enabled": true, "provider": "claude", "models": { "claude": "sonnet", "chatgpt": "gpt-6-luna" },
+          "deep": { "claude": "opus", "chatgpt": "gpt-6.1-sol" }, "personality": "" } }
 ```
 
-Not yet done: voice, a French lock-screen prompt, release-based updates, a fresh-machine install, a French system locale, and any testing on the target laptop.
+### Not yet done
 
-Prochaine mise à jour — Diva met ses lunettes
+- Voice.
+- A French lock-screen prompt (Omarchy's is hard-coded "Enter Password"); only the lock field's colours and shape are themed.
+- Release-based updates: `bin/diva update` fast-forwards the checkout rather than installing a tagged version.
+- A fresh-machine install, a French system locale, and any testing on the target laptop, including battery life on a real discharge.
+- The assistant's CLI (Claude Code or Codex) is not installed by the pack.
 
-Fonctionnalités prévues, à implémenter. Toute l’expérience reste en français.
+What was and was not verified, feature by feature, is in [docs/architecture.md](docs/architecture.md) under "Open questions".
+
+## Diva met ses lunettes
+
+Toute l'expérience reste en français.
+
+### Déjà en place
 
 Fiabilité et dépannage
 
-- Actualiser automatiquement la liste des applications après une installation ou une suppression, même lorsque le menu reste ouvert.
-- Vérifier le résultat des actions avant d’annoncer leur réussite ou d’enregistrer un raccourci appris.
-- Ajouter une compétence de dépannage Diva, chargée explicitement dans les instructions de l’assistante : architecture, problèmes connus, diagnostics et procédures de récupération.
-- Fournir des outils contrôlés pour inspecter l’état, appliquer une réparation et vérifier son résultat, avec un nombre limité de tentatives.
+- La liste des applications s'actualise toute seule après une installation ou une suppression, même menu ouvert.
+- Chaque action passe par `bin/diva-run`, qui vérifie son résultat (fenêtre apparue, volume réellement changé, fenêtre réellement fermée…). Diva n'annonce une réussite, et n'enregistre un raccourci appris, qu'après cette vérification. Un échec est dit dans le menu, ou par une notification s'il est déjà fermé.
+- Compétence de dépannage : `plugin/skills/depannage.md` (architecture, problèmes connus, diagnostics, procédures), chargée dans les instructions de l'assistante dès qu'un état vérifié accompagne la demande.
+- Outils contrôlés, `bin/diva-doctor` : `inspect` (son, Wi-Fi, Bluetooth, écran, batterie, disque, Diva elle-même), `repair <id>` parmi onze réparations fixes sans mot de passe, `verify <id>`, `undo`, `report`. Deux réparations au plus par demande, quatre au plus en dix minutes.
 
 Deux niveaux de réflexion
 
-Les actions locales et raccourcis appris restent prioritaires, sans appel à un modèle.
+- Les actions locales et les raccourcis appris restent prioritaires, sans appel à un modèle.
+- Diva quotidienne : Sonnet avec Claude, Luna avec OpenAI. Diva avec lunettes : Opus avec Claude, Sol avec OpenAI.
+- Le modèle quotidien peut demander une escalade motivée (`escalate` et `reason`). Le contrôleur la déclenche aussi après un échec vérifié, ou quand le diagnostic trouve plusieurs anomalies. Le modèle supérieur reçoit l'état vérifié, les essais précédents et la raison ; il ne recommence pas à l'aveugle.
+- Une escalade par tâche. Le changement de modèle ne change pas les permissions : mêmes intentions, mêmes vérifications.
 
-- Diva quotidienne : Sonnet avec Claude, Luna avec OpenAI.
-- Diva avec lunettes : Opus avec Claude, Sol avec OpenAI.
+Apparence
 
-Le modèle quotidien peut demander une escalade motivée. Le contrôleur peut également la déclencher après un échec vérifié ou pour un dépannage comportant plusieurs étapes. Transmettre au modèle supérieur le contexte et les essais précédents, sans recommencer aveuglément.
-
-Limiter initialement à une escalade par tâche. Le changement de modèle ne change pas les permissions.
-
-Apparence et utilisation de l’écran
-
-En réflexion approfondie, Diva adopte une allure de petite hackeuse : lunettes rondes, expression concentrée et discret terminal rose/violet dans son coin.
-
-Afficher des états réels : « Je vérifie… », « Je m’en occupe… », « Je teste… », puis le résultat. Prévoir un bouton « Arrêter ».
-
-Privilégier les outils en arrière-plan. Si un contrôle de l’écran est indispensable, demander confirmation et suspendre l’opération en cas d’intervention de l’utilisatrice pour éviter les collisions de saisie.
+- En réflexion approfondie, Diva porte des lunettes rondes, prend un air concentré, et un petit terminal violet apparaît sous elle.
+- États réels : « Je vérifie… », « Je m'en occupe… », « Je teste… », puis le résultat, avec le détail des étapes dans le terminal et un bouton « Arrêter ».
 
 Réparations compatibles avec les mises à jour
 
-Conserver les modifications de réglages et les données hors du dépôt. Journaliser les changements, prévoir leur annulation lorsque possible et préserver les modifications personnelles sans rapport.
+- Réglages et données restent hors du dépôt. Chaque réparation est écrite dans `~/.local/state/diva/journal.jsonl` avec de quoi l'annuler quand c'est possible (`bin/diva-doctor undo`). Un fichier de réglages n'est remplacé que s'il est illisible, et l'ancien est conservé.
+- Quand Diva n'y arrive pas, elle écrit un diagnostic dans `~/.local/state/diva/reports/` (versions, état, essais, erreurs récentes) pour une correction dans GitHub, distribuée par une mise à jour normale. Elle ne modifie jamais ses propres sources.
 
-Les bugs nécessitant une modification des sources doivent produire un diagnostic pour une correction dans GitHub, distribuée par une mise à jour normale.
+### Reste à faire
+
+- Contrôle de l'écran : rien n'en a besoin aujourd'hui, tous les outils travaillent en arrière-plan. S'il devient indispensable, il faudra la confirmation et la suspension en cas d'intervention décrites à l'origine.
+- Vérification des actions « sans effet observable » (ouvrir un panneau, changer le fond, programmer un rappel) : elles sont lancées mais pas contrôlées.
+- Le niveau « lunettes » avec OpenAI n'a tourné que contre un faux Codex ; avec Claude, tout a été exercé pour de vrai.
+- Choisir le modèle « lunettes » depuis les réglages (aujourd'hui `ai.deep` dans `config.json`).
+- Ouvrir le rapport ou préparer une issue GitHub depuis le menu.
 
 ## The goal
 
@@ -326,4 +389,3 @@ Do not try to build every phase at once. Preserve the core vision: **very pink, 
 - Install, update, failure recovery, and uninstall work on a clean test account.
 - Another installation works without relying on files from my main account.
 - The pack's dependencies and compatibility with the tested Omarchy version are documented.
-

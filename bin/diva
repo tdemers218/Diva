@@ -14,7 +14,12 @@ PLUGIN_SRC="$ROOT/plugin"
 PLUGIN_DIR="$OMARCHY_CONFIG/plugins/$PLUGIN_ID"
 SHELL_CONFIG="$OMARCHY_CONFIG/shell.json"
 BINDINGS="$HOME/.config/hypr/bindings.lua"
-BIND_KEY="SUPER + SPACE"
+# Diva opens on a tap of the Super key alone, when it is released: Hyprland
+# then knows no other key was pressed with it, so every Super shortcut keeps
+# working. Omarchy's own menu key is taken out so it cannot open in English.
+BIND_KEY="SUPER + SUPER_L"
+BIND_LABEL="Super (tap)"
+MENU_KEY="SUPER + SPACE"
 BIND_BEGIN="-- >>> diva: open Diva's menu (written by bin/diva)"
 BIND_END="-- <<< diva"
 HYPR_MAIN="$HOME/.config/hypr/hyprland.lua"
@@ -22,10 +27,21 @@ LOOK_SRC="$ROOT/hypr/diva.lua"
 LOOK_FILE="$HOME/.config/hypr/diva.lua"
 LOOK_BEGIN="-- >>> diva: rounded, translucent windows and macOS-like input (written by bin/diva)"
 LOOK_END="-- <<< diva look"
+# Every folder under theme/ is one Diva theme; "diva" is the one applied on
+# a first install.
 THEME_SLUG="diva"
-THEME_SRC="$ROOT/theme/diva"
-THEME_DIR="$OMARCHY_CONFIG/themes/$THEME_SLUG"
+THEMES_SRC="$ROOT/theme"
+THEMES_DIR="$OMARCHY_CONFIG/themes"
+THEME_DIR="$THEMES_DIR/$THEME_SLUG"
+theme_slugs() { find "$THEMES_SRC" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort; }
+is_diva_theme() { [[ -n $1 && -d $THEMES_SRC/$1 ]]; }
 THEME_NAME_FILE="$HOME/.local/state/omarchy/current/theme.name"
+
+# The screensaver: Diva's logo replaces Omarchy's, and Omarchy's own
+# screensaver is switched off with its toggle so that Diva's runs instead.
+BRANDING_SRC="$ROOT/branding/screensaver.txt"
+BRANDING="$OMARCHY_CONFIG/branding/screensaver.txt"
+OMARCHY_SAVER_OFF="$HOME/.local/state/omarchy/toggles/screensaver-off"
 
 # Her settings. Created once, never overwritten, left in place by uninstall.
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/diva"
@@ -109,8 +125,13 @@ backup() {
 sync_dir() {
   local src="$1" dst="$2" changes
   mkdir -p "$dst"
-  changes=$(rsync -a --delete --checksum --itemize-changes --exclude tests "$src/" "$dst/")
+  changes=$(rsync -a --delete --checksum --itemize-changes --exclude tests --exclude __pycache__ --exclude "*.pyc" "$src/" "$dst/")
   [[ -n $changes ]]
+}
+
+installed_code_current() {
+  [[ -d $PLUGIN_DIR ]] || return 1
+  [[ -z $(rsync -an --checksum --itemize-changes --exclude __pycache__ --exclude "*.pyc" "$PLUGIN_SRC/" "$PLUGIN_DIR/") ]]
 }
 
 plugin_known() {
@@ -122,7 +143,7 @@ plugin_enabled() {
 }
 
 has_binding() { [[ -f $BINDINGS ]] && grep -qF -- "$BIND_BEGIN" "$BINDINGS"; }
-binding_current() { has_binding && grep -qF -- "o.bind(\"$BIND_KEY\", \"Diva\"" "$BINDINGS"; }
+binding_current() { has_binding && grep -qF -- "o.bind(\"$BIND_KEY\", \"Diva\"" "$BINDINGS" && grep -qF -- "release = true" "$BINDINGS"; }
 
 # Where a widget sits in the bar, as "section index"; empty when it is absent.
 bar_spot() {
@@ -158,6 +179,22 @@ restore_menu_button() {
     say "warning: could not put the Omarchy menu button back; run: omarchy bar put omarchy.menu --section left --index 0"
 }
 
+# Save complete workspace entries once, so uninstall restores their settings.
+# The dock is part of Diva's widget; workspaces now live in the overview.
+take_workspace_widgets() {
+  WORKSPACE_WIDGETS=$(jq -c '[.bar.layout // {} | to_entries[] | .key as $section | .value | to_entries[] | select(.value.id == "omarchy.workspaces") | {section: $section, index: .key, entry: .value}]' "$SHELL_CONFIG")
+  json_edit "$SHELL_CONFIG" '.bar.layout |= with_entries(.value |= map(select(.id != "omarchy.workspaces")))'
+}
+
+restore_workspace_widgets() {
+  local records="$1"
+  [[ -n $records ]] || return 0
+  json_edit "$SHELL_CONFIG" --argjson records "$records" '
+    reduce $records[] as $r (. ;
+      if any(.bar.layout[$r.section][]; .id == "omarchy.workspaces") then .
+      else .bar.layout[$r.section] = (.bar.layout[$r.section] // [] | .[:$r.index] + [$r.entry] + .[$r.index:]) end)'
+}
+
 hypr_ok() { [[ -z $(hyprctl configerrors 2>/dev/null | tr -d '[:space:]') ]]; }
 
 # A marked block is the only thing Diva writes into her Hyprland files.
@@ -188,14 +225,39 @@ remove_binding() {
 add_binding() {
   binding_current && return 0
   block_add "$BINDINGS" "$BIND_BEGIN" "$BIND_END" \
-    "hl.unbind(\"$BIND_KEY\")
-o.bind(\"$BIND_KEY\", \"Diva\", \"omarchy-shell shell toggle $PLUGIN_ID '{}'\")" || return 0
+    "hl.unbind(\"$MENU_KEY\")
+o.bind(\"$BIND_KEY\", \"Diva\", \"omarchy-shell shell toggle $PLUGIN_ID '{}'\", { release = true })" || return 0
   hyprctl reload >/dev/null 2>&1 || true
   sleep 0.3
   if ! hypr_ok; then
     remove_binding
-    say "warning: the $BIND_KEY shortcut was not added because Hyprland rejected it"
+    say "warning: the $BIND_LABEL shortcut was not added because Hyprland rejected it"
   fi
+}
+
+# Done once: keep the logo that was there, put Diva's, and silence Omarchy's
+# screensaver unless it was already off.
+take_screensaver() {
+  mkdir -p "$(dirname "$BRANDING")" "$(dirname "$OMARCHY_SAVER_OFF")"
+  [[ -f $BRANDING && ! -f $STATE_DIR/screensaver.txt.before ]] && cp -p "$BRANDING" "$STATE_DIR/screensaver.txt.before"
+  cp "$BRANDING_SRC" "$BRANDING"
+  if [[ -f $OMARCHY_SAVER_OFF ]]; then
+    SCREENSAVER=kept-off
+  else
+    : >"$OMARCHY_SAVER_OFF"
+    SCREENSAVER=taken
+  fi
+}
+
+give_back_screensaver() {
+  [[ -n $1 ]] || return 0
+  if [[ -f $STATE_DIR/screensaver.txt.before ]]; then
+    # Only if the logo is still Diva's: one she drew herself stays.
+    cmp -s "$BRANDING" "$BRANDING_SRC" && cp -p "$STATE_DIR/screensaver.txt.before" "$BRANDING"
+    rm -f "$STATE_DIR/screensaver.txt.before"
+  fi
+  [[ $1 == taken ]] && rm -f "$OMARCHY_SAVER_OFF"
+  return 0
 }
 
 has_look() { [[ -f $HYPR_MAIN ]] && grep -qF -- "$LOOK_BEGIN" "$HYPR_MAIN"; }
@@ -233,6 +295,8 @@ cmd_install() {
 
   preflight
   omarchy plugin validate "$PLUGIN_SRC" >/dev/null || fail "the Diva plugin does not validate; nothing was changed"
+  # Validate QML before copying a potentially unfinished concurrent edit.
+  "$ROOT/tests/preview.sh" >/dev/null || fail "Diva's QML preview failed; nothing was changed"
   mkdir -p "$STATE_DIR" "$CONFIG_DIR"
 
   local first=true backup_dir previous_theme plugin_changed=false theme_changed=false path
@@ -240,13 +304,17 @@ cmd_install() {
   backup_dir=$(backup)
   previous_theme=$(state .previousTheme)
   MENU_BUTTON=$(state .menuButton)
+  WORKSPACE_WIDGETS=$(state .workspaceWidgets)
+  [[ $(state .desktopNavigation) == true ]] || take_workspace_widgets
+
   local look
   look=$(state .look)
+  SCREENSAVER=$(state .screensaver)
 
   # Anything already sitting where Diva installs, and not put there by Diva,
   # is kept in the backup rather than overwritten.
   if $first; then
-    for path in "$PLUGIN_DIR" "$THEME_DIR"; do
+    for path in "$PLUGIN_DIR" $(theme_slugs | sed "s|^|$THEMES_DIR/|"); do
       if [[ -e $path ]]; then
         cp -a "$path" "$backup_dir/$(basename "$(dirname "$path")")-$(basename "$path")"
         say "kept a copy of the existing $path in $backup_dir"
@@ -257,7 +325,11 @@ cmd_install() {
   [[ -f $CONFIG ]] || echo '{ "name": "", "animations": true, "ai": { "enabled": false, "provider": "claude" } }' >"$CONFIG"
 
   if sync_dir "$PLUGIN_SRC" "$PLUGIN_DIR"; then plugin_changed=true; fi
-  if sync_dir "$THEME_SRC" "$THEME_DIR"; then theme_changed=true; fi
+  # All her themes are installed; only a change to the one in use matters now.
+  local slug
+  for slug in $(theme_slugs); do
+    if sync_dir "$THEMES_SRC/$slug" "$THEMES_DIR/$slug" && [[ $(current_theme) == "$slug" ]]; then theme_changed=true; fi
+  done
 
   omarchy-shell shell rescanPlugins >/dev/null
   for _ in $(seq 1 40); do
@@ -275,14 +347,17 @@ cmd_install() {
     if $apply_theme; then
       omarchy-theme-set "$THEME_SLUG" >/dev/null || say "warning: could not apply the Diva theme"
     fi
-  elif $theme_changed && [[ $(current_theme) == "$THEME_SLUG" ]]; then
-    omarchy-theme-set "$THEME_SLUG" >/dev/null || say "warning: could not re-apply the Diva theme"
+  elif $theme_changed; then
+    omarchy-theme-set "$(current_theme)" >/dev/null || say "warning: could not re-apply the theme in use"
   fi
 
   # Done once, and again only for an install made before Diva replaced the
   # Omarchy menu. If she later puts the Omarchy button back, it stays.
   if [[ -z $MENU_BUTTON ]]; then
     take_menu_button
+    add_binding
+  elif has_binding && ! binding_current; then
+    # An install from before the shortcut changed: rewrite Diva's own block.
     add_binding
   fi
 
@@ -295,9 +370,17 @@ cmd_install() {
     add_look || look=off
   fi
 
+  if [[ -z $SCREENSAVER ]]; then
+    take_screensaver
+  elif cmp -s "$BRANDING" "$STATE_DIR/screensaver.logo.installed" 2>/dev/null && ! cmp -s "$BRANDING" "$BRANDING_SRC"; then
+    # Still the logo Diva installed last time, and the pack's has changed.
+    cp "$BRANDING_SRC" "$BRANDING"
+  fi
+  cp "$BRANDING_SRC" "$STATE_DIR/screensaver.logo.installed"
+
   jq -n --arg version "$(pack .version)" --arg commit "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
-    --arg when "$(date -Is)" --arg theme "$previous_theme" --arg button "$MENU_BUTTON" --arg look "$look" \
-    '{version: $version, commit: $commit, installedAt: $when, previousTheme: $theme, menuButton: $button, look: $look}' >"$STATE"
+    --arg when "$(date -Is)" --arg theme "$previous_theme" --arg button "$MENU_BUTTON" --arg look "$look" --arg saver "$SCREENSAVER" --argjson workspaces "${WORKSPACE_WIDGETS:-[]}" \
+    '{version: $version, commit: $commit, installedAt: $when, previousTheme: $theme, menuButton: $button, look: $look, screensaver: $saver, desktopNavigation: true, workspaceWidgets: $workspaces}' >"$STATE"
 
   # The plugin is keepLoaded and Quickshell caches loaded QML, so changed code
   # needs a fresh shell. A first install has nothing cached.
@@ -307,7 +390,7 @@ cmd_install() {
   fi
 
   say "Diva $(pack .version) is installed. Backup: $backup_dir"
-  say "Open it with the Diva button in the bar, or $BIND_KEY"
+  say "Open it with the Diva button in the bar, or a tap of the Super key"
 }
 
 cmd_update() {
@@ -333,14 +416,21 @@ cmd_uninstall() {
   previous_theme=$(state .previousTheme)
   menu_button=$(state .menuButton)
 
-  if [[ $(current_theme) == "$THEME_SLUG" && -n $previous_theme && $previous_theme != "$THEME_SLUG" ]]; then
+  if is_diva_theme "$(current_theme)" && [[ -n $previous_theme ]] && ! is_diva_theme "$previous_theme"; then
     omarchy-theme-set "$previous_theme" >/dev/null || say "warning: could not restore theme '$previous_theme'"
   fi
+  # Give back anything Diva was holding down to save the battery.
+  [[ -x $PLUGIN_DIR/bin/diva-power ]] && "$PLUGIN_DIR/bin/diva-power" restore >/dev/null 2>&1
+  give_back_screensaver "$(state .screensaver)"
+  rm -f "$STATE_DIR/screensaver.logo.installed"
   remove_binding
   remove_look
   omarchy plugin disable "$PLUGIN_ID" >/dev/null 2>&1 || true
   restore_menu_button "$menu_button"
-  rm -rf "$THEME_DIR" "$PLUGIN_DIR"
+  restore_workspace_widgets "$(state .workspaceWidgets)"
+  local slug
+  for slug in $(theme_slugs); do rm -rf "${THEMES_DIR:?}/$slug"; done
+  rm -rf "$PLUGIN_DIR"
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
   rm -f "$STATE"
@@ -365,12 +455,15 @@ cmd_status() {
   fi
   check "Diva plugin files" test -f "$PLUGIN_DIR/manifest.json"
   check "Diva plugin enabled" plugin_enabled
-  check "Diva shortcut ($BIND_KEY)" binding_current
+  check "Diva desktop service responds" omarchy-shell diva.desktop status
+  check "Installed Diva code matches this checkout" installed_code_current
+  check "Diva shortcut ($BIND_LABEL)" binding_current
   check "Diva window look" has_look
   check "Hyprland config has no errors" hypr_ok
   check "Omarchy menu still available" omarchy-shell shell call omarchy.menu ping "{}"
-  check "Diva theme files" test -f "$THEME_DIR/colors.toml"
+  check "Diva themes ($(theme_slugs | wc -l))" bash -c 'for s in "$@"; do test -f "$0/$s/colors.toml" || exit 1; done' "$THEMES_DIR" $(theme_slugs)
   check "Diva settings file" jq -e . "$CONFIG"
+  check "Diva screensaver logo" cmp -s "$BRANDING" "$BRANDING_SRC"
   echo "  theme    $(current_theme)"
   echo "  backups  $(find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) in $BACKUPS"
   $ok
@@ -443,7 +536,16 @@ cmd_test() {
   bash -n "$PLUGIN_SRC/bin/diva-install"
   bash -n "$PLUGIN_SRC/bin/diva-state"
   bash -n "$PLUGIN_SRC/bin/diva-window"
-  "$runner" -silent -input "$ROOT/tests"
+  bash -n "$PLUGIN_SRC/bin/diva-run"
+  bash -n "$PLUGIN_SRC/bin/diva-power"
+  bash -n "$PLUGIN_SRC/bin/diva-screensaver"
+  bash -n "$PLUGIN_SRC/bin/diva-screensaver-launch"
+  bash -n "$PLUGIN_SRC/bin/diva-doctor"
+  "$ROOT/tests/test_hypr.sh"
+  python3 "$ROOT/tests/test_wallpapers.py"
+  python3 "$ROOT/tests/test_install.py"
+  "$ROOT/tests/preview.sh"
+  env -u QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic "$runner" -silent -input "$ROOT/tests"
 }
 
 command="${1:-help}"

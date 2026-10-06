@@ -8,8 +8,8 @@
 #   diva-window close|fullscreen|maximize|float|split|next|pop
 #   diva-window left|right|up|down        swap with the neighbour
 #   diva-window wider|narrower|taller|shorter [--now]
-#   diva-window to-workspace <1-10>       send the window there
-#   diva-window goto-workspace <1-10>     go there
+#   diva-window to-workspace <1-100>       send the window there
+#   diva-window goto-workspace <1-100>     go there
 #
 # Unless --now is given, it waits a moment first: Diva's menu is closing, and
 # the window she was called from must be the active one again.
@@ -19,9 +19,13 @@ set -uo pipefail
 op="${1:-}"
 arg="${2:-}"
 
-workspace() { [[ $arg =~ ^([1-9]|10)$ ]]; }
+workspace() { [[ $arg =~ ^([1-9][0-9]?|100)$ ]]; }
 
 case "$op" in
+move-address)
+  [[ $arg =~ ^0x[0-9a-f]{4,16}$ && ${3:-} =~ ^([1-9][0-9]?|100)$ ]] || exit 2
+  expr="hl.dsp.window.move({ window = \"address:$arg\", workspace = \"$3\", follow = false })"
+  ;;
 focus)
   [[ $arg =~ ^0x[0-9a-f]{4,16}$ ]] || exit 2
   expr="hl.dsp.focus({ window = \"address:$arg\" })"
@@ -30,7 +34,29 @@ close) expr='hl.dsp.window.close()' ;;
 fullscreen) expr='hl.dsp.window.fullscreen({ mode = "fullscreen" })' ;;
 maximize) expr='hl.dsp.window.fullscreen({ mode = "maximized" })' ;;
 float) expr='hl.dsp.window.float({ action = "toggle" })' ;;
-split) expr='hl.dsp.layout("togglesplit")' ;;
+split)
+  # Resize only an explicitly requested pair. Keep focus on the original
+  # window and leave the default for newly opened columns alone.
+  [[ ${!#} == --now ]] || sleep 0.18
+  exec hyprctl eval '
+    local current = hl.get_active_window()
+    if not current or current.floating or not current.workspace then error("Choose a tiled window first") end
+    local windows = hl.get_workspace_windows(current.workspace)
+    local count = 0
+    for _, w in ipairs(windows) do if w.mapped and not w.floating and not w.hidden then count = count + 1 end end
+    if count < 2 then error("Open a second window first") end
+    hl.dispatch(hl.dsp.window.fullscreen({ window = current, action = "unset", mode = "fullscreen" }))
+    hl.dispatch(hl.dsp.layout("colresize 0.5"))
+    local hasRight = false
+    for _, w in ipairs(windows) do if w.mapped and not w.floating and not w.hidden and (w.at.x or w.at[1] or 0) > (current.at.x or current.at[1] or 0) then hasRight = true end end
+    hl.dispatch(hl.dsp.layout(hasRight and "focus r" or "focus l"))
+    local partner = hl.get_active_window()
+    if not partner or partner.address == current.address then error("No neighbouring column") end
+    hl.dispatch(hl.dsp.window.fullscreen({ window = partner, action = "unset", mode = "fullscreen" }))
+    hl.dispatch(hl.dsp.layout("colresize 0.5"))
+    hl.dispatch(hl.dsp.focus({ window = current }))'
+
+  ;;
 next) expr='hl.dsp.window.cycle_next()' ;;
 left | right | up | down) expr="hl.dsp.window.swap({ direction = \"${op:0:1}\" })" ;;
 wider) expr='hl.dsp.window.resize({ x = 120, y = 0, relative = true })' ;;

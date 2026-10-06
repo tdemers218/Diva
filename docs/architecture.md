@@ -21,7 +21,7 @@ Diva is its own Omarchy shell plugin with its own menu. It does not depend on Ke
 ```
 pack.json            what is in the pack: modules, bundled assets, tested versions
 bin/diva             install / update / uninstall / status / test
-theme/diva/          Omarchy theme   -> ~/.config/omarchy/themes/diva
+theme/<name>/        Omarchy themes  -> ~/.config/omarchy/themes/<name> (six: diva, diva-lavande, …)
 hypr/diva.lua        window look     -> ~/.config/hypr/diva.lua
 plugin/              shell plugin    -> ~/.config/omarchy/plugins/io.github.tdemers218.diva
   manifest.json        kinds: overlay + bar-widget
@@ -42,6 +42,11 @@ plugin/              shell plugin    -> ~/.config/omarchy/plugins/io.github.tdem
   Diva{Button,Switch,Input}.qml   the controls those pages use
   bin/diva-ai          optional assistant: one Messages API call, prints one JSON line
   bin/diva-plugins     marketplace catalog + `omarchy plugin` wrapper, prints one JSON line
+  bin/diva-power       battery care: levels of cuts on battery, all undone on mains
+  PetDetector.qml      notices a shaken pointer (four quick changes of direction)
+  bin/diva-run         runs one action and verifies that it happened
+  bin/diva-doctor      inspect / repair / verify / undo / report, with a journal
+  skills/depannage.md  the troubleshooting skill given to the assistant
   bin/diva-window      window moves as fixed Hyprland dispatchers (focus, close, float, resize, workspace…)
   bin/diva-state       reads and sets volume, brightness, Wi-Fi, Bluetooth; prints one JSON line
   bin/diva-install     installs YouTube / Netflix (web apps) or Stremio (Flathub), by fixed name
@@ -61,11 +66,18 @@ tests/tst_actions.qml
 - **Bar and lock**: `theme/diva/shell.toml` is Omarchy's generated shell theme for these colours with a few values changed (bar and popup alpha, bar height, type scale, lock field colours); a theme's own `shell.toml` replaces the generated one. `hypr/diva.lua` adds a blur rule for the `omarchy-*` layers that become translucent. Nothing of Omarchy's bar or lock code is cloned.
 - **Films**: `Smart.MOVIES` lists YouTube, Netflix and Stremio. An installed app is matched by Flatpak id or by name and opened; otherwise the tile is an install offer that, once confirmed, runs `bin/diva-install <name>`: `omarchy-webapp-install` for the two sites, and for Stremio a per-user Flathub remote plus `flatpak install --user`, in a visible terminal.
 - **Icons and avatar**: tiles name a glyph in `core/Icons.js` (checked against JetBrainsMono Nerd Font) drawn in one colour; nothing Diva writes contains an emoji, and the assistant is told not to use any. The avatar is vector shapes on a 100 x 100 grid. Its mood is one derived property of the menu (`thinking`, `love`/`sad` flashes, `happy`, `sleepy`, `shy`, `curious`, `idle`); a `HoverHandler` over the whole panel feeds the pointer's position to her gaze (`lookX`, `lookY`) and to `near`, which makes her lean, grow a little and blush.
-- **Diva outside the menu**: the plugin declares three kinds. `overlay` is the menu, `bar-widget` draws `DivaAvatar` at bar height, and `service` (`Companion.qml`) is mounted with the shell and owns a small layer-shell window on the Bottom layer, anchored bottom-right, whose input mask is the avatar alone so the rest of the corner still belongs to the desktop. The three do not share state; the companion reads `config.json` and `bin/diva-state` itself. Both outside avatars keep `animate` false except while hovered, speaking, or during a three-second glance every thirteen seconds, so they do not keep the compositor drawing.
+- **Diva outside the menu**: the plugin declares three kinds. `overlay` is the menu, `bar-widget` draws `DivaAvatar` at bar height, and `service` (`Companion.qml`) is mounted with the shell and owns a small layer-shell window on the Bottom layer, whose input mask is the avatar alone so the rest of the desktop keeps its clicks. The window now covers the whole screen so she can be dragged anywhere; her position is stored as fractions of the screen in `~/.local/state/diva/companion.json`, and one press serves both uses (a click opens the menu, a drag past 8 px carries her). The three do not share state; the companion reads `config.json` and `bin/diva-state` itself. Both outside avatars keep `animate` false except while hovered, speaking, or during a three-second glance every thirteen seconds, so they do not keep the compositor drawing.
 - **Motion**: two bezier curves (`divaSpring`, `divaSoft`) and `hl.animation` overrides for windows, fades, borders, layers, workspaces and the scratchpad, plus layer rules that slide notifications in and leave Diva's own surfaces to animate themselves. No animation loops forever (no rotating border), to spare the battery.
 - **Navigation**: when the menu opens it reads `hyprctl clients -j` (open windows, with each application's icon looked up by window class) and, once per session, `omarchy menu keybindings --print` (the live bindings). `Smart.matchWindows` offers open windows; `Smart.WINDOW_ACTIONS` and `parseWorkspace` offer moves, run by `bin/diva-window`, whose every operation is a fixed dispatcher string and whose only outside values are a checked window address and a workspace number. Diva's menu is a layer, not a window, so "the window she was in" is simply the active window again once the menu has closed; the helper waits 180 ms for that, except for resizing, which keeps the menu open and acts at once. `Smart.GUIDE` holds the explanations with `{Omarchy binding description|fallback}` placeholders filled from the live bindings and worded in French (`keyLabel`); a how-to question is answered from it locally, and the same lines go to the assistant.
 - **Result layout**: `Smart.resolve` still returns tiles ranked by score; `Smart.layout` then groups them by kind into `SECTIONS` (`answer`, `windows`, `window`, `do`, `open`, `settings`, `ask`), orders sections by their best score (answers first, `ask` last unless the assistant is the best answer), numbers every tile in display order and reports where the best one landed, which is what Enter runs. `ResultCard` draws one tile in its section's style on a shared frame. Window cards use Quickshell's `ScreencopyView` on the window's Wayland toplevel, live only while the card is shown.
 - **Fuzzy matching**: `Actions.fuzzy` accepts typed letters found in order from the start of a word, weaker the more letters are skipped; `Actions.loose` (a beginning, else fuzzy) is used for application, window and setting names, and Diva's own phrases accept it from four letters. Scores are multiplied by the match quality, so exact matches lead.
+- **Verified actions**: `Smart.check(tile)` names what must be true after a tile runs (`launch`, `focus:<address>`, `closed`, `float`, `fullscreen`, `state:<field>:up|down|toggle|=N`, or `none`). `bin/diva-run` snapshots the state, runs the argv, polls for the change and prints `{ok, verified, detail}`; `ok` is false only on evidence of failure, and `verified` is false when nothing could be observed either way. `Diva.qml:ran()` then replies, learns a pending shortcut only on `ok && verified`, or reports the failure (in the menu, or as a notification once it has closed).
+- **Troubleshooting**: the controller is `Diva.qml` (`task`, `phase`, `steps`), not the model. A request starts a task at the `daily` level. `diagnose` makes the controller run `diva-doctor inspect` and ask again with the result and the skill; `repair` makes it apply one listed repair, verify it, inspect again and continue while something is still wrong, up to two repairs. The model only ever names an intent. `diva-doctor` also refuses a fifth repair within ten minutes whoever asks.
+- **Two levels**: `level` in the request selects the model (`ai.models.<provider>` or `ai.deep.<provider>`; defaults Sonnet/Opus and Luna/Sol). Escalation happens once per task: asked for by the daily model (`escalate`, `reason`), or triggered by the controller after a verified failure or when inspection finds several problems. The deep request carries the checked state, the attempts and the reason. Nothing else changes with the level.
+- **Journal and reports**: every repair appends `{at, repair, undo, note}` to `~/.local/state/diva/journal.jsonl`; `undo` reverts the last reversible one and marks it. `report` writes a Markdown diagnostic under `~/.local/state/diva/reports/`.
+- **Battery care**: `bin/diva-power apply` reads UPower (on battery, percent, smoothed time to empty), picks a level from `power.mode` and those readings, and moves to it. Desktop cuts are `hyprctl eval` overrides on top of the config; changing level reloads the config and re-applies what the new level still cuts, so nothing can be left behind, and a reload by someone else is noticed and repaired at the next tick. Profile, Bluetooth, screen and keyboard cuts each store the previous value in `~/.local/state/diva/power.json` and are reverted only when still as Diva set them. Omarchy's own per-source power profile is respected: Diva only tightens to `power-saver` and gives back what was there. `Companion.qml` runs it every 30 s and announces level changes; `bin/diva uninstall` runs `restore` first.
+- **Themes**: every folder under `theme/` is installed as an Omarchy theme; `diva` is applied on a first install and the others are only made available. Each has `colors.toml`, `icons.theme`, wallpapers, a preview and a `shell.toml` derived from Diva's glass one with that theme's colours. The settings page lists them from a table in `Diva.qml` (`themes`) and switches with `omarchy-theme-set`; the theme in use is read from Omarchy's `current/theme.name`. Diva's own menu keeps its plum glass under every theme. Uninstall removes all of them and returns to the theme that was in use before Diva.
+- **Screensaver**: Omarchy's launcher always runs its own `omarchy-screensaver`, with every effect, and offers no setting for either. So the pack switches Omarchy's off with its own toggle (`~/.local/state/omarchy/toggles/screensaver-off`, only if it was on) and Diva's desktop service starts hers from an `IdleMonitor` set to `idle.screensaver` in `shell.json`. `bin/diva-screensaver-launch` opens the same fullscreen terminal with the same window class, so Omarchy's idle and lock handling still recognise it; `bin/diva-screensaver` puts her name, her face (`plugin/art/robot-*.txt`) or both on stage, then either runs `ttfx` with one of twenty-three effects in her colours or plays one of four scenes drawn in the script itself with cursor moves (`scene_hearts`, `scene_sparkles`, `scene_shimmer`, `scene_face`). `DIVA_SCENE` and `DIVA_ART` force one, for checks. The logo is `branding/screensaver.txt`, installed over Omarchy's with the previous one kept and restored on uninstall (unless she has drawn her own since).
 - **Glass**: the card is a translucent rectangle; the blur behind it is Hyprland's, switched on for the `diva-menu` layer by one `hl.layer_rule` in `hypr/diva.lua` with `ignore_alpha` so the faint veil around the card stays sharp. Without that rule (`--no-look`) the card is simply translucent.
 - **Control centre**: `bin/diva-state` prints `{volume, muted, brightness, wifi, network, bluetooth}` and takes `volume N`, `brightness N`, `mute`, `wifi`, `bluetooth`. Volume goes to the sink `omarchy-audio-output-sink` names, the one Omarchy's own keys drive. Slider drags are coalesced: only the latest value is sent once the previous call returns.
 - **Conversation**: `Smart.looksLikeQuestion()` puts "Demander à Diva" first for questions when no exact local answer exists. The menu keeps the exchange in memory (never on disk) and sends the last eight lines with each follow-up.
@@ -101,6 +113,9 @@ tests/tst_actions.qml
 - **Typed levels** (`volume à 40`) still use `wpctl` on the default sink, unlike the control centre's slider, which uses Omarchy's sink.
 - **Desktop motion** was accepted by Hyprland and its values read back; how it feels on the target laptop's integrated graphics is untested, and each `hl.animation` line can be deleted on its own.
 - **The desktop companion** is hidden whenever windows cover the corner (she is on the layer below them, by design). Its low-battery line and night-time dozing were not triggered.
+- **Battery care was walked through every level with simulated readings** (the machine was on mains): shadows, blur, translucency, animations and the power profile were seen to change and to come back. The screen dim, Bluetooth and keyboard-light cuts did not trigger here (screen already low, Bluetooth in use, no keyboard light), and no real discharge was observed, so the estimates and the half-minute loop on battery are untested.
+- **Petting** is covered by tests of the detector; nobody has shaken a real pointer at her yet.
+- **Troubleshooting was exercised on real faults made for the purpose**: a muted sound (found, repaired, verified), then a muted sound with Bluetooth off (escalated to Opus, both repaired, re-checked). The ten-minute limit also fired for real during testing and produced a report. `restart-audio`, `restart-wifi`, `restart-bluetooth`, `restart-shell`, `rescan-plugins` and the two resets were not run; `reset-settings` was only seen to refuse a readable file. The Stop button was not pressed.
 - **Window moves**: floating and re-tiling a real window through the menu worked. Close, fullscreen, swap, resize, workspace moves and going to another window use the same path but were not each run. Resizing needs a neighbour: a window alone on its workspace has nothing to resize against.
 - **Sliders and switches were not operated by hand.** The helper behind them was tested directly; dragging, and switching Wi-Fi or Bluetooth off from the menu, were not. Night light has no state shown.
 - **Pointer following** was checked by placing the pointer and opening the menu (gaze, proximity and hover all registered); continuous motion could not be simulated.
@@ -110,3 +125,49 @@ tests/tst_actions.qml
 - Hyprland has no title-bar buttons; closing is `SUPER + Q` / `SUPER + W`. A title-bar plugin (hyprbars) was not evaluated.
 - Cursor theme and movie-service compatibility are not chosen.
 - Target hardware (EliteBook 850 G6): responsiveness, battery and suspend/resume are untested.
+
+### Diva desktop navigation
+
+`Service.qml` loads `Desktop.qml` and `Companion.qml` independently as part of
+the persistent service, even when Diva's companion is hidden. `diva.desktop show`, `hide`, `toggle`, and `showApp`
+are Quickshell IPC methods. A two-pixel overlay on each output opens the overview
+after a 250 ms dwell; it re-arms only after the pointer leaves the top edge.
+Four-finger up/down gestures open/close the same overview. Three-finger horizontal
+swipes move Hyprland's native scrolling tape. New columns start at full width;
+Diva's explicit side-by-side action resizes a pair without changing that default.
+
+`DesktopModel.qml` snapshots the native Hyprland and desktop-entry models outside
+removal callbacks. Signatures prevent unchanged samples from rebuilding dock
+items. `core/Desktop.js` matches application identities, deduplicates pinned and
+running applications, computes the magnification falloff, and fits overview cells.
+`Dock.qml` lives next to Diva's face in the bar and uses stable hit areas; its
+scrollable width is capped so a long running-app list cannot grow without bound.
+A single-window app focuses directly; an app with multiple windows opens a
+filtered overview. Right-click toggles a installed application's pin in
+`~/.config/diva/config.json`. Unknown applications remain focusable while running.
+
+`OverviewView.qml` animates live `ScreencopyView` surfaces between window geometry
+and an aspect-preserving grid. This is a shell animation, not a compositor camera
+transform. Previews stop capturing when closed. Workspace thumbnails select a
+workspace on hover, enter it on click, and accept dragged windows. Adding an empty
+workspace keeps a placeholder for this service's lifetime; activation or moving a
+window creates the actual Hyprland workspace. Existing named workspaces are kept.
+The installer records complete removed workspace-widget entries and restores them
+on uninstall, preserving inline settings and user layout choices.
+
+`ControlPage.qml` contains Wi-Fi, Bluetooth, audio, and wallpaper views inside the
+Diva menu. Wi-Fi uses Quickshell Networking and passes PSKs directly to
+NetworkManager. Bluetooth uses Quickshell's live devices and the existing fixed
+Omarchy device helper, checking the resulting state. Audio uses tracked PipeWire
+nodes, output/input selection, microphone controls, and per-application volume.
+Wallpaper discovery and selection use `diva-wallpapers`, which only permits images
+in the current theme and its user wallpaper directory. These pages do not open
+Omarchy's panels. Unknown enterprise Wi-Fi profiles still require provisioning;
+existing profiles can connect here. This release does not reproduce the stock
+panels' advanced DNS, speed-test, audio-tuning, or diagnostics tools.
+
+Verification: `bin/diva test` includes pure QML behaviour tests and isolated
+wallpaper/install/update/uninstall tests. `tests/preview.sh` runs a separate
+Quickshell instance offscreen, checks the available non-layer-shell components compile, and renders control
+and overview fixtures. It does not exercise real radios, the live compositor,
+touchpad hardware, or live window capture; those need an interactive desktop test.

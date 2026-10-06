@@ -51,6 +51,12 @@ find_cli() {
 find_claude() { find_cli claude; }
 find_codex() { find_cli codex; }
 
+# Two levels of thought (`level` in the request). Day to day Diva uses a
+# quick model; with her glasses on, for a problem that resisted, a stronger
+# one. Defaults: Sonnet then Opus on Claude, Luna then Sol on ChatGPT. The
+# level changes the model and nothing else: the same intents, checked the
+# same way.
+#
 # The models she can pick, with what each is best for. Claude's are the
 # Claude Code aliases; ChatGPT's are checked against the Codex catalog below.
 CLAUDE_MODELS='[
@@ -68,6 +74,12 @@ CHATGPT_MODELS='[
 chosen_model() {
   local picked
   picked=$(jq -r --arg p "$1" '.ai.models[$p] // empty' "$CONFIG" 2>/dev/null || true)
+  if [[ -n $picked ]]; then echo "$picked"; else echo "$2"; fi
+}
+# The stronger model: her choice in ai.deep, else the subscription's default.
+deep_model() {
+  local picked
+  picked=$(jq -r --arg p "$1" '.ai.deep[$p] // empty' "$CONFIG" 2>/dev/null || true)
   if [[ -n $picked ]]; then echo "$picked"; else echo "$2"; fi
 }
 
@@ -98,11 +110,12 @@ if [[ ${1:-} == --status ]]; then
   [[ -s ${key_file/#\~/$HOME} ]] && key_ok=true
   jq -nc --arg provider "$provider" --argjson claude "$claude_state" --argjson chatgpt "$chatgpt_state" --argjson key "$key_ok" \
     --argjson claudeModels "$CLAUDE_MODELS" --argjson chatgptModels "$chatgpt_models" \
-    --arg claudeModel "$(chosen_model claude haiku)" --arg chatgptModel "$(chosen_model chatgpt gpt-6-luna)" '
+    --arg claudeModel "$(chosen_model claude sonnet)" --arg chatgptModel "$(chosen_model chatgpt gpt-6-luna)" \
+    --arg claudeDeep "$(deep_model claude opus)" --arg chatgptDeep "$(deep_model chatgpt gpt-6.1-sol)" '
     {provider: $provider,
-     claude: ($claude + {models: $claudeModels, model: $claudeModel}),
-     chatgpt: ($chatgpt + {models: $chatgptModels, model: $chatgptModel}),
-     anthropic: {cli: true, loggedIn: $key, plan: "", models: [], model: ""}}
+     claude: ($claude + {models: $claudeModels, model: $claudeModel, deep: $claudeDeep}),
+     chatgpt: ($chatgpt + {models: $chatgptModels, model: $chatgptModel, deep: $chatgptDeep}),
+     anthropic: {cli: true, loggedIn: $key, plan: "", models: [], model: "", deep: ""}}
     | . + {cli: .[$provider].cli, loggedIn: .[$provider].loggedIn, plan: .[$provider].plan}'
   exit 0
 fi
@@ -136,7 +149,18 @@ personality=$(setting .ai.personality)
 
 # Who Diva is. She is a friend who happens to live in the computer, not an
 # assistant reading a script; `ai.personality` in the settings adds to this.
-system=$(jq -r --arg name "$name" --arg extra "$personality" '
+level=$(jq -r 'if .level == "deep" then "deep" else "daily" end' <<<"$input")
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The troubleshooting skill and the list of repairs are loaded only when the
+# request carries a checked state (`context`).
+skill=""
+repairs="[]"
+if jq -e '(.context // null) != null' <<<"$input" >/dev/null 2>&1; then
+  skill=$(cat "$here/../skills/depannage.md" 2>/dev/null || true)
+  repairs=$("$here/diva-doctor" list 2>/dev/null || echo "[]")
+fi
+
+system=$(jq -r --arg name "$name" --arg extra "$personality" --arg level "$level" --arg skill "$skill" --argjson repairs "$repairs" '
   "Tu es Diva. Tu vis dans l'\''ordinateur de " + (if $name == "" then "ta copine" else $name end) +
   " et tu es un peu sa meilleure amie qui s'\''y connaît : pétillante, tendre, drôle sans en faire trop, toujours de son côté.\n\n" +
   "Ta façon de parler : comme on s'\''écrit entre amies. Naturelle, spontanée, tutoiement, phrases courtes. " +
@@ -154,7 +178,13 @@ system=$(jq -r --arg name "$name" --arg extra "$personality" '
   "- url : ouvrir une page web précise, adresse https complète dans url.\n" +
   "- search : chercher sur Internet, mots à chercher dans query.\n" +
   "- volume ou brightness : régler le son ou la luminosité, pourcentage de 0 à 100 dans percent.\n" +
+  "- diagnose : elle décrit quelque chose qui ne marche pas sur l'\''ordinateur (son, Wi-Fi, Bluetooth, écran, barre, toi-même). Tu ne devines pas : choisis diagnose, on vérifiera l'\''état et on te le montrera.\n" +
+  "- repair : seulement quand un état vérifié t'\''a été donné plus bas ; id exact de la réparation dans repair_id.\n" +
   "- none : rien à faire sur l'\''ordinateur, tu lui réponds simplement dans reply.\n\n" +
+  (if $level == "deep"
+   then "Tu as mis tes lunettes : c'\''est une demande qui a résisté. Prends le temps de regarder ce qui a déjà été essayé avant de répondre, et ne refais pas ce qui a échoué. Laisse escalate à false.\n\n"
+   else "Si la demande dépasse ce que tu peux bien traiter (plusieurs étapes, un problème qui résiste, une explication délicate), mets escalate à true et dis pourquoi dans reason : on te repassera la main avec tes lunettes. Sinon laisse escalate à false et reason vide.\n\n"
+   end) +
   "Quand tu fais quelque chose, reply dit ce que tu fais, avec ta voix à toi (« Je te mets ça moins fort »). " +
   "N'\''invente jamais une action ou une application absente des listes. Si sa demande n'\''est pas claire, " +
   "choisis none et pose-lui une seule question toute simple. Tu ne peux rien installer ni changer les réglages du système : " +
@@ -164,20 +194,30 @@ system=$(jq -r --arg name "$name" --arg extra "$personality" '
    then "Pour l'\''aider à s'\''y retrouver, voici ce qui est vrai sur cet ordinateur. Appuie-toi dessus, et n'\''invente aucun autre raccourci :\n" + .guide + "\n\n"
    else "" end) +
   "Actions disponibles :\n" + ([.actions[]? | "- " + .id + " : " + .title] | join("\n")) + "\n\n" +
-  "Applications installées :\n" + ([.apps[]? | "- " + .] | join("\n"))
+  "Applications installées :\n" + ([.apps[]? | "- " + .] | join("\n")) +
+  (if (.context // null) != null
+   then "\n\n" + $skill +
+        "\n\n## Réparations possibles\n" + ([$repairs[] | "- " + .id + " : " + .does] | join("\n")) +
+        "\n\n## État vérifié à l'\''instant\n" + ((.context.inspect // {}) | tojson) +
+        "\n\n## Déjà essayé pour cette demande (attempts)\n" + ((.context.attempts // []) | tojson) +
+        (if ((.context.reason // "") | length) > 0 then "\n\n## Pourquoi tu as tes lunettes\n" + .context.reason else "" end)
+   else "" end)
 ' <<<"$input") || fail config
 
-schema='{"type":"object","properties":{"reply":{"type":"string","description":"Ce que Diva lui dit, avec sa voix à elle, en français"},"intent":{"type":"string","enum":["action","app","url","search","volume","brightness","none"]},"action_id":{"type":"string"},"app_name":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"percent":{"type":"integer"}},"required":["reply","intent","action_id","app_name","url","query","percent"],"additionalProperties":false}'
+schema='{"type":"object","properties":{"reply":{"type":"string","description":"Ce que Diva lui dit, avec sa voix à elle, en français"},"intent":{"type":"string","enum":["action","app","url","search","volume","brightness","diagnose","repair","none"]},"action_id":{"type":"string"},"app_name":{"type":"string"},"url":{"type":"string"},"query":{"type":"string"},"percent":{"type":"integer"},"repair_id":{"type":"string"},"escalate":{"type":"boolean"},"reason":{"type":"string"}},"required":["reply","intent","action_id","app_name","url","query","percent","repair_id","escalate","reason"],"additionalProperties":false}'
 
 # Her answer, whichever way it came, as the one line the menu reads.
 emit() {
-  jq -c '{ok: true, reply: (.reply // ""), intent: (
+  jq -c --arg level "$level" '{ok: true, reply: (.reply // ""), intent: (
       if .intent == "action" then {type: "action", id: .action_id}
       elif .intent == "app" then {type: "app", name: .app_name}
       elif .intent == "url" then {type: "url", url: .url}
       elif .intent == "search" then {type: "search", query: .query}
       elif .intent == "volume" or .intent == "brightness" then {type: .intent, percent: .percent}
-      else {type: "none"} end)}' 2>/dev/null || fail api
+      elif .intent == "diagnose" then {type: "diagnose"}
+      elif .intent == "repair" then {type: "repair", id: .repair_id}
+      else {type: "none"} end),
+    escalate: (.escalate == true), reason: (.reason // ""), level: $level}' 2>/dev/null || fail api
 }
 
 # A follow-up carries the last few lines of the conversation with it.
@@ -191,7 +231,8 @@ work="${XDG_CACHE_HOME:-$HOME/.cache}/diva/ai"
 
 if [[ $provider == claude ]]; then
   claude_bin=$(find_claude) || fail cli
-  model=$(chosen_model claude haiku)
+  model=$(chosen_model claude sonnet)
+  [[ $level == deep ]] && model=$(deep_model claude opus)
   # No tools, no saved session, none of her Claude Code settings or memory:
   # one question in an empty folder, one structured answer back.
   mkdir -p "$work" && cd "$work" || fail config
@@ -213,6 +254,7 @@ if [[ $provider == chatgpt ]]; then
   codex_bin=$(find_codex) || fail cli
   "$codex_bin" login status 2>&1 | grep -qi '^logged in' || fail login
   model=$(chosen_model chatgpt gpt-6-luna)
+  [[ $level == deep ]] && model=$(deep_model chatgpt gpt-6.1-sol)
   # One question in an empty folder, read-only, nothing kept; the answer is
   # the last message, shaped by the same schema.
   mkdir -p "$work" && cd "$work" || fail config

@@ -14,7 +14,8 @@ Rectangle {
   property bool stacked: false
   signal clicked()
 
-  implicitWidth: face.implicitWidth + Style.space(text ? 28 : 20)
+  // An icon on its own makes a round button.
+  implicitWidth: text ? face.implicitWidth + Style.space(28) : implicitHeight
   implicitHeight: Style.space(34)
   radius: height / 2
   color: primary ? diva.deepRose : area.containsMouse ? Qt.rgba(1, 1, 1, 0.16) : diva.tileColor
@@ -28,16 +29,21 @@ Rectangle {
   Grid {
     id: face
     anchors.centerIn: parent
-    columns: root.stacked ? 1 : 2
-    spacing: root.stacked ? Style.space(3) : Style.space(7)
+    // When the leftover width is odd, lean left rather than right: the icons
+    // are drawn a pixel narrower than they measure.
+    anchors.horizontalCenterOffset: Math.round(root.width - face.width) % 2 !== 0 ? -0.5 : 0
+    // An icon on its own gets no column or gap for a label it does not have,
+    // or it would sit off-centre by half that gap.
+    columns: root.stacked || root.text === "" || root.glyph === "" ? 1 : 2
+    spacing: root.text === "" || root.glyph === "" ? 0 : root.stacked ? Style.space(3) : Style.space(7)
     horizontalItemAlignment: Grid.AlignHCenter
     verticalItemAlignment: Grid.AlignVCenter
-    Text {
+    DivaGlyph {
       visible: root.glyph !== ""
-      text: root.glyph ? Icons.glyph(root.glyph) : ""
+      name: root.glyph
+      family: root.diva.iconFamily
+      size: Style.space(root.stacked ? 19 : 16)
       color: root.primary ? root.diva.ink : root.diva.rose
-      font.family: root.diva.iconFamily
-      font.pixelSize: Style.space(root.stacked ? 19 : 16)
     }
     Text {
       id: label

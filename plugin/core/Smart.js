@@ -41,6 +41,8 @@ var SETTINGS = [
     phrases: ["prenom", "mon prenom", "changer prenom", "mon nom"] },
   { id: "assistant", title: "Mon assistante", glyph: "creation", page: "settings",
     phrases: ["assistante", "assistant", "ia", "intelligence artificielle", "claude", "compte claude", "connexion claude"] },
+  { id: "theme", title: "Changer de thème", glyph: "palette", page: "settings",
+    phrases: ["theme", "themes", "changer theme", "couleurs", "changer couleurs", "apparence", "style"] },
   { id: "animations", title: "Animations", glyph: "sparkles", page: "settings", phrases: ["animations", "animation"] },
   { id: "wallpaper-pick", title: "Choisir un fond d'écran", glyph: "images", run: ["omarchy-theme-bg-switcher"],
     phrases: ["fond ecran", "fond", "choisir fond", "arriere plan", "wallpaper", "image fond"] },
@@ -224,7 +226,9 @@ function answer(query, now, state) {
   var w = Actions.words(query)
   if (w.length === 0 || w.length > 6) return ""
   if (state && state.battery >= 0 && (w.indexOf("batterie") >= 0 || w.indexOf("pile") >= 0))
-    return "Il te reste " + state.battery + " % de batterie" + (state.charging ? ", et elle se recharge." : ".")
+    return "Il te reste " + state.battery + " % de batterie" + (state.charging ? ", et elle se recharge."
+      : state.minutes > 0 ? ", environ " + (state.minutes >= 60 ? Math.floor(state.minutes / 60) + " h " + two(state.minutes % 60) : state.minutes + " min") + " à ce rythme."
+      : ".")
   if (w.indexOf("heure") >= 0) return "Il est " + now.getHours() + " h " + two(now.getMinutes()) + "."
   if (w.indexOf("jour") >= 0 || w.indexOf("date") >= 0)
     return "On est " + DAYS[now.getDay()] + " " + now.getDate() + " " + MONTHS[now.getMonth()] + " " + now.getFullYear() + "."
@@ -377,8 +381,8 @@ var WINDOW_ACTIONS = [
     phrases: ["mettre gauche", "fenetre gauche", "deplacer gauche", "a gauche", "deplacer fenetre"] },
   { id: "right", title: "Mettre à droite", glyph: "arrow-right-bold",
     phrases: ["mettre droite", "fenetre droite", "deplacer droite", "a droite", "deplacer fenetre"] },
-  { id: "split", title: "Changer le partage", glyph: "swap",
-    phrases: ["changer partage", "cote a cote", "empiler fenetres", "fenetres haut bas", "inverser fenetres"] },
+  { id: "split", title: "Mettre côte à côte", glyph: "swap",
+    phrases: ["cote a cote", "deux fenetres cote a cote", "partager ecran"] },
   { id: "next", title: "Fenêtre suivante", glyph: "layers",
     phrases: ["fenetre suivante", "autre fenetre", "passer fenetre suivante", "changer fenetre"] },
   { id: "pop", title: "Garder au premier plan", glyph: "pin",
@@ -398,7 +402,7 @@ var GUIDE = [
   { id: "fullscreen", title: "Plein écran", glyph: "fullscreen", phrases: ["plein ecran", "comment plein ecran", "sortir plein ecran"],
     text: "{Full screen|Super + F} met la fenêtre en plein écran. La même touche la remet comme avant." },
   { id: "float", title: "Fenêtres rangées ou détachées", glyph: "window-restore", phrases: ["fenetre flottante", "detacher fenetre", "fenetres rangees", "mosaique", "pourquoi fenetres cote"],
-    text: "Ici les fenêtres se rangent toutes seules côte à côte. {Toggle window floating/tiling|Super + T} en détache une pour la poser où tu veux, et la même touche la range." },
+    text: "Chaque fenêtre a sa place dans un ruban qui défile. Diva peut en mettre deux côte à côte si tu le demandes. {Toggle window floating/tiling|Super + T} en détache une pour la poser où tu veux, et la même touche la range." },
   { id: "switch", title: "Passer d'une fenêtre à l'autre", glyph: "layers", phrases: ["changer fenetre", "passer fenetre", "autre fenetre", "retrouver fenetre", "ou est fenetre", "fenetre disparu"],
     text: "{Focus on next window|Alt + Tab} passe à la fenêtre suivante, et Super avec une flèche va vers celle d'à côté. Sinon ouvre « Mes fenêtres » ici, ou tape le nom de l'application." },
   { id: "workspaces", title: "Les espaces de travail", glyph: "grid", phrases: ["espaces", "espace travail", "bureaux", "changer espace", "changer bureau", "c est quoi espaces"],
@@ -414,7 +418,7 @@ var GUIDE = [
   { id: "lock", title: "Verrouiller l'ordinateur", glyph: "lock", phrases: ["verrouiller raccourci", "comment verrouiller"],
     text: "{Lock system|Super + Ctrl + L} verrouille l'ordinateur. Je peux aussi le faire pour toi." },
   { id: "diva", title: "M'appeler", glyph: "heart", phrases: ["ouvrir diva", "appeler diva", "comment ouvrir menu", "raccourci diva"],
-    text: "{Diva|Super + Espace} m'ouvre, de n'importe où. Je suis aussi dans la barre en haut et dans le coin du bureau." },
+    text: "Un petit appui sur la touche Super, toute seule, m'ouvre de n'importe où. Je suis aussi dans la barre en haut et dans le coin du bureau." },
   { id: "keys", title: "Tous les raccourcis", glyph: "keyboard", phrases: ["raccourcis", "raccourcis clavier", "touches", "liste raccourcis", "aide clavier"],
     text: "{Keybindings|Super + K} ouvre la liste complète des raccourcis d'Omarchy (en anglais).", run: ["omarchy-menu-keybindings"] }
 ]
@@ -763,6 +767,8 @@ function layout(tiles) {
 // The argv a tile runs; null for tiles that run nothing themselves (ai, a
 // group, a page of the menu). `pluginDir` locates Diva's own helpers.
 function argv(tile, config, dirs, pluginDir) {
+  if (tile.kind === "action" && Actions.byId(tile.id).effect.type === "screensaver")
+    return pluginDir ? [pluginDir + "/bin/diva-screensaver-launch", "force"] : null
   if (tile.kind === "action") return Actions.argv(Actions.byId(tile.id), config, dirs)
   // The launcher Omarchy's own app menu uses.
   if (tile.kind === "app") return ["uwsm-app", "--", "gtk-launch", tile.id + ".desktop"]
@@ -807,6 +813,26 @@ function argv(tile, config, dirs, pluginDir) {
     return null
   }
   return null
+}
+
+// What must be true once a tile has run, for bin/diva-run to verify (see
+// its header). "none" where nothing observable changes.
+var ACTION_CHECKS = { "browser": "launch", "files": "launch", "downloads": "launch", "pictures": "launch", "documents": "launch",
+                      "volume-up": "state:volume:up", "volume-down": "state:volume:down", "mute": "state:muted:toggle",
+                      "brightness-up": "state:brightness:up", "brightness-down": "state:brightness:down" }
+
+function check(tile) {
+  if (tile.kind === "action") return ACTION_CHECKS[tile.id] || "none"
+  if (tile.kind === "app" || tile.kind === "url" || tile.kind === "search") return "launch"
+  if (tile.kind === "volume") return "state:volume:=" + clampPercent(tile.percent)
+  if (tile.kind === "brightness") return "state:brightness:=" + Math.max(1, clampPercent(tile.percent))
+  if (tile.kind === "window") return /^0x[0-9a-f]{4,16}$/.test(tile.id) ? "focus:" + tile.id : "none"
+  if (tile.kind === "winact") {
+    if (tile.id === "close") return "closed"
+    if (tile.id === "float") return "float"
+    if (tile.id === "fullscreen" || tile.id === "maximize") return "fullscreen"
+  }
+  return "none"
 }
 
 // What Diva says after running a tile, and whether her menu stays open.
