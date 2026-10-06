@@ -11,6 +11,14 @@
 #   diva-window to-workspace <1-100>       send the window there
 #   diva-window goto-workspace <1-100>     go there
 #
+# From the overview, on a window that need not be the active one:
+#   diva-window move-address <0xaddr> <1-100>
+#   diva-window close-address|float-address|ungroup|own-column <0xaddr>
+#   diva-window width <0xaddr> <20-100>       column width, percent of screen
+#   diva-window resize-address <0xaddr> <dx> <dy>   floating windows only
+#   diva-window arrange <0xaddr> <0xtarget> before|after|stack|pair|group
+#     pair shares a screen (halves, then quarters); group makes tabs
+#
 # Unless --now is given, it waits a moment first: Diva's menu is closing, and
 # the window she was called from must be the active one again.
 
@@ -20,11 +28,204 @@ op="${1:-}"
 arg="${2:-}"
 
 workspace() { [[ $arg =~ ^([1-9][0-9]?|100)$ ]]; }
+address() { [[ ${1:-} =~ ^0x[0-9a-f]{4,16}$ ]]; }
+
+# Run Lua in Hyprland; it answers "ok" unless something went wrong.
+lua() {
+  local out
+  out=$(hyprctl eval "$1" 2>&1)
+  [[ $out == ok* ]] || { printf '%s\n' "$out" >&2; return 1; }
+}
+
+# Take a window out of its tab group. A group left with a single tab is no
+# longer a group, so it is dissolved rather than keeping an empty tab bar.
+leave_group() {
+  local rest
+  rest=$(hyprctl clients -j | jq -r --arg a "$1" '.[] | select(.address == $a) | .grouped | map(select(. != $a)) | if length == 1 then .[0] else empty end')
+  lua "local w = hl.get_window(\"address:$1\"); if w and w.group then w.group:remove(w) end" || return 1
+  [[ -z $rest ]] || hyprctl dispatch "hl.dsp.group.toggle({ window = \"address:$rest\" })" >/dev/null
+}
+
+# The scrolling layout only rearranges the focused column. Focus the window,
+# do the work, and give focus back, all in one step so nothing shows. Nothing
+# is done unless the focus really moved: a panel holding the keyboard (the
+# overview, a moment before it lets go) would otherwise leave the work to
+# land on whichever window was active. A few tries cover that moment.
+with_focus() {
+  local back out try
+  back=$(hyprctl activeworkspace -j | jq -r '.id')
+  for try in 1 2 3 4 5 6; do
+    out=$(hyprctl eval "local prev = hl.get_active_window()
+      hl.dispatch(hl.dsp.focus({ window = \"address:$1\" }))
+      local now = hl.get_active_window()
+      if not now or (tostring(now.address):gsub(\"^0x\", \"\")) ~= \"${1#0x}\" then
+        if prev then hl.dispatch(hl.dsp.focus({ window = \"address:\" .. prev.address })) end
+        error(\"focus not taken\")
+      end
+      $2
+      if prev then hl.dispatch(hl.dsp.focus({ window = \"address:\" .. prev.address }))
+      else hl.dispatch(hl.dsp.focus({ workspace = \"$back\" })) end" 2>&1)
+    [[ $out == ok* ]] && return 0
+    [[ $out == *"focus not taken"* ]] || break
+    sleep 0.07
+  done
+  printf '%s\n' "$out" >&2
+  return 1
+}
+
+
+# --- Arranging one window (src) relative to another (dst) --------------------
+
+# One fact about the two windows, read fresh each time the layout changed.
+fact() { hyprctl clients -j | jq -r --arg s "$src" --arg d "$dst" "$1"; }
+
+# Tabs: the two windows share one place. This is Hyprland's own group.
+tab_group() {
+  fact '.[] | select(.address == $s) | .grouped | index($d) // empty' | grep -q . && return 0
+  leave_group "$src" || return 1
+  lua "local s = hl.get_window(\"address:$src\"); local d = hl.get_window(\"address:$dst\")
+    if not s or not d then error(\"window gone\") end
+    if not d.group then hl.dispatch(hl.dsp.group.toggle({ window = \"address:$dst\" })) end
+    d = hl.get_window(\"address:$dst\")
+    if not d.group then error(\"no group\") end
+    d.group:add(s)"
+}
+
+# Put src before or after dst's column, or stack it into that column.
+place() {
+  local how=$1 to from at goal steps side body="" i into
+  # A tab group travels whole. A floating window is tiled again, and one from
+  # another workspace joins the target's before it is placed.
+  if [[ $(fact '.[] | select(.address == $s) | .floating') == true ]]; then
+    hyprctl dispatch "hl.dsp.window.float({ action = \"toggle\", window = \"address:$src\" })" >/dev/null
+    sleep 0.12
+  fi
+  to=$(fact '.[] | select(.address == $d) | .workspace.id')
+  if [[ $(fact '.[] | select(.address == $s) | .workspace.id') != "$to" ]]; then
+    hyprctl dispatch "hl.dsp.window.move({ window = \"address:$src\", workspace = \"$to\", follow = false })" >/dev/null
+    sleep 0.12
+  fi
+  # Stacked with others: give it a column of its own, which can then travel.
+  if [[ $(fact '(.[] | select(.address == $s)) as $w | [.[] | select(.workspace.id == $w.workspace.id and (.floating | not) and .at[0] == $w.at[0] and .address != $s and ((.grouped | index($s)) | not))] | length') -gt 0 ]]; then
+    with_focus "$src" 'hl.dispatch(hl.dsp.layout("promote"))' || return 1
+    sleep 0.12
+  fi
+  # Columns are the distinct left edges, in order. Work out how many places
+  # the window's column has to travel to sit next to the target's.
+  read -r from at < <(fact '(.[] | select(.address == $s)) as $a | (.[] | select(.address == $d)) as $b
+    | ([.[] | select(.workspace.id == $b.workspace.id and (.floating | not)) | .at[0]] | unique) as $xs
+    | "\($xs | index($a.at[0])) \($xs | index($b.at[0]))"')
+  [[ $from =~ ^[0-9]+$ && $at =~ ^[0-9]+$ ]] || return 1
+  if [[ $how == after || ($how == stack && $from -gt $at) ]]; then
+    ((from < at)) && goal=$at || goal=$((at + 1))
+  else
+    ((from < at)) && goal=$((at - 1)) || goal=$at
+  fi
+  [[ $how == stack && $from == "$at" ]] && return 0
+  steps=$((goal - from)) side=r
+  ((steps < 0)) && steps=$((-steps)) side=l
+  for ((i = 0; i < steps; i++)); do body+="hl.dispatch(hl.dsp.layout(\"swapcol $side\")) "; done
+  # Stacking: once next to the target, step into its column.
+  if [[ $how == stack ]]; then
+    ((from < at)) && into=r || into=l
+    body+="hl.dispatch(hl.dsp.window.move({ direction = \"$into\" }))"
+  fi
+  [[ -n $body ]] || return 0
+  with_focus "$src" "$body"
+}
+
+half() { with_focus "$1" 'hl.dispatch(hl.dsp.layout("colresize 0.50"))'; }
+
+# A screen shared between windows, each with its own part of it: two halves,
+# then a half and two quarters, then four quarters. Two neighbouring
+# half-width columns are such a screen. Dropped on a window that is alone,
+# src becomes its other half; dropped on a screen already shared, it takes a
+# quarter, under the window it was dropped on if that half is still whole,
+# otherwise under the other half. A screen with four quarters is full: src
+# starts the next one beside it.
+pair() {
+  local screen x w n last i=0 mine=-1 partner=-1
+  local -a xs ws ns lasts
+  screen=$(hyprctl monitors -j | jq -r --argjson m "$(fact '.[] | select(.address == $d) | .monitor')" \
+    '.[] | select(.id == $m) | ((if (.transform % 2) == 1 then .height else .width end) / .scale | floor)')
+  [[ $screen =~ ^[0-9]+$ ]] || return 1
+  # Columns of the target's workspace, left to right, without src: left edge,
+  # width, how many windows are stacked in it, and the lowest one.
+  while read -r x w n last; do
+    xs+=("$x") ws+=("$w") ns+=("$n") lasts+=("$last")
+  done < <(fact '(.[] | select(.address == $d)) as $b
+    | [.[] | select(.workspace.id == $b.workspace.id and (.floating | not) and .address != $s)]
+    | group_by(.at[0]) | .[] | sort_by(.at[1]) | "\(.[0].at[0]) \(.[0].size[0]) \(map(.at[1]) | unique | length) \(.[-1].address)"')
+  x=$(fact '.[] | select(.address == $d) | .at[0]')
+  is_half() { ((ws[$1] * 100 > screen * 40 && ws[$1] * 100 < screen * 60)); }
+  while ((i < ${#xs[@]})); do
+    if ((i + 1 < ${#xs[@]})) && is_half $i && is_half $((i + 1)); then
+      [[ ${xs[i]} == "$x" ]] && mine=$i partner=$((i + 1))
+      [[ ${xs[i + 1]} == "$x" ]] && mine=$((i + 1)) partner=$i
+      i=$((i + 2))
+    else
+      i=$((i + 1))
+    fi
+  done
+  if ((mine < 0)); then
+    place after || return 1
+    sleep 0.12
+    half "$dst" && half "$src"
+  elif ((ns[mine] == 1)); then
+    place stack
+  elif ((ns[partner] == 1)); then
+    dst=${lasts[partner]}
+    place stack
+  else
+    ((partner > mine)) && dst=${lasts[partner]}
+    place after || return 1
+    sleep 0.12
+    half "$src"
+  fi
+}
 
 case "$op" in
 move-address)
   [[ $arg =~ ^0x[0-9a-f]{4,16}$ && ${3:-} =~ ^([1-9][0-9]?|100)$ ]] || exit 2
   expr="hl.dsp.window.move({ window = \"address:$arg\", workspace = \"$3\", follow = false })"
+  ;;
+close-address)
+  address "$arg" || exit 2
+  expr="hl.dsp.window.close({ window = \"address:$arg\" })"
+  ;;
+float-address)
+  address "$arg" || exit 2
+  expr="hl.dsp.window.float({ action = \"toggle\", window = \"address:$arg\" })"
+  ;;
+resize-address)
+  address "$arg" && [[ ${3:-} =~ ^-?[0-9]{1,4}$ && ${4:-} =~ ^-?[0-9]{1,4}$ ]] || exit 2
+  expr="hl.dsp.window.resize({ window = \"address:$arg\", x = $3, y = $4, relative = true })"
+  ;;
+ungroup)
+  address "$arg" || exit 2
+  leave_group "$arg"
+  exit
+  ;;
+own-column)
+  address "$arg" || exit 2
+  with_focus "$arg" 'hl.dispatch(hl.dsp.layout("promote"))'
+  exit
+  ;;
+width)
+  address "$arg" && [[ ${3:-} =~ ^([2-9][0-9]|100)$ ]] || exit 2
+  with_focus "$arg" "hl.dispatch(hl.dsp.layout(\"colresize $(awk -v p="$3" 'BEGIN { printf "%.2f", p / 100 }')\"))"
+  exit
+  ;;
+arrange)
+  address "$arg" && address "${3:-}" && [[ $arg != "$3" && ${4:-} =~ ^(before|after|stack|group|pair)$ ]] || exit 2
+  src=$arg dst=$3
+  [[ $(fact '[.[] | select(.address == $s or .address == $d)] | length') == 2 ]] || exit 1
+  case "$4" in
+  group) tab_group ;;
+  pair) pair ;;
+  *) place "$4" ;;
+  esac
+  exit
   ;;
 focus)
   [[ $arg =~ ^0x[0-9a-f]{4,16}$ ]] || exit 2

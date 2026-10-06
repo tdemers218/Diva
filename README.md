@@ -4,7 +4,7 @@
 
 Diva réunit des thèmes, un menu, des contrôles du bureau et une petite compagne animée. Elle aide à retrouver une application, régler le son, organiser les fenêtres ou comprendre un problème, avec des mots simples.
 
-**État actuel : prototype fonctionnel 0.13.0, en phase de finition.** Le projet a été essayé sur Omarchy 4.0.4, dans un compte de test. L'installation sur une machine neuve et l'utilisation sur le portable cible restent à valider. Ce document prépare le futur guide officiel ; il ne constitue pas une annonce de version stable.
+**État actuel : prototype fonctionnel 0.14.0, en phase de finition.** Le projet a été essayé sur Omarchy 4.0.4, dans un compte de test. L'installation sur une machine neuve et l'utilisation sur le portable cible restent à valider. Ce document prépare le futur guide officiel ; il ne constitue pas une annonce de version stable.
 
 - [Guide utilisateur](#guide-utilisateur) : installation, navigation, réglages et limites actuelles.
 - [Développement et maintenance](#développement-et-maintenance) : architecture, règles, corrections prioritaires et validation.
@@ -59,17 +59,26 @@ Les commandes courantes, calculs et guides de raccourcis sont traités localemen
 
 ### Applications, fenêtres et espaces
 
-Le dock dans la barre regroupe les applications favorites et ouvertes. Cliquer sur une icône lance l'application ou revient à sa fenêtre. Si elle possède plusieurs fenêtres, Diva propose une vue dédiée. Un clic droit permet d'épingler ou de retirer une application des favoris ; un dock trop long peut défiler.
+Le dock dans la barre regroupe les applications favorites et ouvertes. Les favoris qui ne sont pas ouverts viennent en premier ; les applications ouvertes suivent dans l'ordre de leurs fenêtres, espace par espace puis de gauche à droite, comme sur le ruban.
+
+Cliquer sur une icône lance l'application ou revient à sa dernière fenêtre utilisée ; si Diva y est déjà, un nouveau clic passe à la précédente. Laisser le pointeur un instant sur une application ouverte affiche ses fenêtres en aperçus animés : cliquer sur un aperçu pour choisir cette fenêtre précise, ou sur sa croix pour la fermer. Un clic droit permet d'épingler ou de retirer une application des favoris ; un dock trop long peut défiler.
 
 Pour ouvrir la vue d'ensemble, utiliser son bouton dans le dock, maintenir le pointeur au bord supérieur pendant un quart de seconde, ou faire un geste vers le haut avec quatre doigts sur un pavé tactile compatible.
 
-Dans cette vue :
+Dans cette vue, l'espace choisi est dessiné à l'échelle : chaque fenêtre est une copie animée, dans ses vraies proportions et à sa vraie place sur le ruban. Les vignettes du haut montrent les autres espaces de la même façon.
 
-- Cliquer sur une fenêtre pour la retrouver ; les flèches et Entrée fonctionnent aussi.
+- Cliquer sur une fenêtre pour la retrouver.
 - Survoler un espace pour le regarder, puis cliquer pour y entrer.
-- Glisser une fenêtre sur un espace pour la déplacer.
-- Utiliser **+** pour préparer un espace supplémentaire.
+- Glisser une fenêtre sur un espace pour la déplacer, ou sur **+** pour lui donner un nouvel espace. **+** seul prépare un espace vide.
+- **Partager l'écran** : glisser une fenêtre au milieu d'une autre. Elles prennent chacune une moitié ; une troisième prend un quart (une moitié, deux quarts), une quatrième donne quatre quarts. Un écran plein envoie la suivante juste à côté. Un cadre **Duo**, **Trio** ou **Quatuor** entoure les fenêtres qui partagent un écran.
+- **Ranger** : déposer sur le côté gauche ou droit d'une fenêtre place avant ou après ; en bas, la fenêtre s'empile dessous.
+- **Onglets** (plusieurs fenêtres à la même place) : maintenir **Maj** en déposant au milieu. C'est volontairement un geste de plus que le partage d'écran.
+- **Redimensionner** : tirer le bord droit d'une fenêtre ; la largeur s'accroche à un tiers, la moitié, deux tiers ou tout l'écran. Une fenêtre flottante se redimensionne par son coin.
+- Au survol, des boutons proposent les largeurs courantes, de laisser flotter, de sortir des onglets et de fermer.
+- Au clavier : flèches pour choisir, Maj + flèches pour déplacer la colonne, **+** et **−** pour la largeur, **G** pour partager l'écran avec la voisine, **T** pour des onglets, **F** pour flotter, Suppr pour fermer, Tab ou un chiffre pour changer d'espace, Entrée pour ouvrir.
 - Fermer avec Échap ou un geste vers le bas avec quatre doigts.
+
+Diva, dans le coin, annonce ce qu'un geste va faire avant de lâcher la fenêtre.
 
 Les gestes horizontaux à trois doigts font défiler le ruban de fenêtres. Les nouvelles fenêtres occupent une colonne pleine largeur ; Diva peut créer une disposition côte à côte à la demande.
 
@@ -158,6 +167,7 @@ La désinstallation est conçue pour retirer les éléments gérés par Diva et 
 - La dictée et les échanges vocaux ne sont pas encore disponibles.
 - L'interface propre à Diva est en français ; certains menus d'administration, contenus d'extensions et le message du verrouillage d'Omarchy restent en anglais.
 - Le parcours Claude a été exercé avec de vrais appels. Le parcours ChatGPT doit encore être validé avec un Codex connecté ; les essais documentés utilisent un substitut.
+- Dans la vue d'ensemble, les glissers, le redimensionnement et les aperçus du dock ont été essayés avec une souris simulée ; Maj pendant un glisser, les touches **G** et **T**, les gestes du pavé tactile et plusieurs écrans restent à essayer à la main.
 - Certaines interactions, réparations et installations restent à essayer manuellement. La lecture Netflix et l'installation complète de Stremio ne sont pas entièrement validées.
 - L'installation neuve, la locale française, la veille/reprise et l'autonomie sur le portable cible restent à tester.
 - Les problèmes de vérification, de diagnostic et de restauration listés ci-dessous sont encore ouverts.
@@ -182,7 +192,7 @@ Un second compte isole les réglages utilisateur, pas les paquets et services du
 | --- | --- |
 | `pack.json` et `bin/diva` | Description du pack, installation, état, mise à jour, désinstallation et tests |
 | `theme/` et `hypr/diva.lua` | Thèmes et personnalisation du bureau |
-| `plugin/manifest.json` | Extension `io.github.tdemers218.diva`, version 0.13.0 |
+| `plugin/manifest.json` | Extension `io.github.tdemers218.diva`, version 0.14.0 |
 | `Diva.qml` | Menu, conversation, exécution et orchestration des tâches |
 | `Service.qml` | Chargement indépendant du bureau et de la compagne |
 | `Dock.qml`, `Desktop.qml`, `DesktopModel.qml` | Applications, fenêtres et vue d'ensemble |

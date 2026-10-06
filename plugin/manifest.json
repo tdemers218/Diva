@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.tdemers218.diva",
   "name": "Diva",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "author": "Tristan Demers",
   "license": "MIT",
   "description": "Diva : un menu, une assistante et une petite compagne sur le bureau, en fran\u00e7ais",

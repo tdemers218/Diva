@@ -48,6 +48,7 @@ BarWidget {
     y: root.vertical ? root.barSize : 0
     barSize: root.barSize
     vertical: root.vertical
+    edge: root.bar ? root.bar.position : "bottom"
   }
 
   HoverHandler {

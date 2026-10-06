@@ -139,17 +139,64 @@ Diva's explicit side-by-side action resizes a pair without changing that default
 `DesktopModel.qml` snapshots the native Hyprland and desktop-entry models outside
 removal callbacks. Signatures prevent unchanged samples from rebuilding dock
 items. `core/Desktop.js` matches application identities, deduplicates pinned and
-running applications, computes the magnification falloff, and fits overview cells.
+running applications, computes the magnification falloff, and lays out the overview.
 `Dock.qml` lives next to Diva's face in the bar and uses stable hit areas; its
 scrollable width is capped so a long running-app list cannot grow without bound.
-A single-window app focuses directly; an app with multiple windows opens a
-filtered overview. Right-click toggles a installed application's pin in
+A click focuses the app's most recently used window (`Desktop.byRecency`), or the
+one before it when that window already has focus. Hovering an open app for 380 ms
+opens a `PopupWindow` anchored to its icon with one live `ScreencopyView` per
+window, to pick or close a particular one; it closes 280 ms after the pointer
+leaves both the icon and the popup. The filtered overview (`showApp`) remains as
+an IPC method but the dock no longer opens it. Right-click toggles a installed application's pin in
 `~/.config/diva/config.json`. Unknown applications remain focusable while running.
 
 `OverviewView.qml` animates live `ScreencopyView` surfaces between window geometry
-and an aspect-preserving grid. This is a shell animation, not a compositor camera
-transform. Previews stop capturing when closed. Workspace thumbnails select a
-workspace on hover, enter it on click, and accept dragged windows. Adding an empty
+and a map of the chosen workspace. This is a shell animation, not a compositor
+camera transform. Previews stop capturing when closed. All layout changes share one duration and curve (`pace`), so position and size
+move together and neighbouring tiles do not cross; outlines around tiles fade out
+while a layout change is travelling and back in once it has arrived, and only a
+change of tile geometry counts as one. Workspace thumbnails select
+a workspace on hover (after a short dwell), enter it on click, and accept dragged
+windows.
+
+The map is `Desktop.map()` in `core/Desktop.js`: one scale for the whole
+workspace, so tiles keep the windows' real proportions and positions on the
+scrolling ribbon. Tab groups collapse into one tile (the most recently focused
+member stands for it), columns and stacks are recovered from the left edges, and
+floating windows are drawn last, on top. Below a scale of 0.2 the map stops
+shrinking and scrolls instead. The app-filtered view (`showApp`) has no shared
+layout to draw and uses `Desktop.gallery()`, an even grid in each window's own
+proportions, with editing switched off. `OverviewTile.qml` is one tile; tiles live
+in a `ListModel` keyed by window address so that a tile that moved or changed
+size animates there instead of being rebuilt, which also keeps its screen copy.
+
+Changes go through `bin/diva-window` by window address, one at a time from a
+queue in `Desktop.qml`: `arrange <window> <target> before|after|stack|pair|group`,
+`width <window> <percent>`, `resize-address` (floating only), `ungroup`,
+`own-column`, `float-address`, `close-address`, `move-address`. Hyprland's
+scrolling layout only rearranges the focused column, so `with_focus` focuses the
+window, sends the layout message (`swapcol`, `colresize`, `promote`) and restores
+focus inside a single `hyprctl eval`; it acts only once it has confirmed the
+focus moved. Hyprland refuses that focus while a layer holds the keyboard
+exclusively, so the overview panel drops to no keyboard focus for the duration of
+a change. A relative `window.resize` on a tiled column by address was observed to
+collapse the column, which is why tiled widths always use `colresize`. While the
+overview is open `DesktopModel` re-reads Hyprland's window list about three times
+a second, and immediately after each change.
+
+`pair` is the shared screen: two neighbouring columns of about half a screen
+(40 to 60 percent) count as one. A window dropped on a lone window is placed
+after it and both columns are set to half; dropped on a shared screen it is
+stacked into the half it was dropped on if that half holds one window, else into
+the other half, and a screen of four quarters sends it beside to start the next.
+`Desktop.screens()` and `joinKind()` make the same decision in the view, for the
+frames and for what Diva announces; `group` (tabs) is only reached with Shift or
+the T key. `Desktop.dock()` orders running apps by `inOrder` (workspace, then
+left edge, then top), and `DesktopModel` re-reads positions on Hyprland events so
+the dock follows a rearrangement.
+
+`diva.desktop map` returns the tiles as drawn and `diva.desktop drop <address> <x>
+<y> <tabs>` replays a drop at a point; both exist for checks. Adding an empty
 workspace keeps a placeholder for this service's lifetime; activation or moving a
 window creates the actual Hyprland workspace. Existing named workspaces are kept.
 The installer records complete removed workspace-widget entries and restores them

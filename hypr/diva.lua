@@ -65,6 +65,8 @@ o.window({ tag = "default-opacity" }, { opacity = "0.94 0.88" })
 -- Diva's menu is frosted glass: blur what is behind her card, but not behind
 -- the faint veil around it.
 hl.layer_rule({ match = { namespace = "diva-menu" }, blur = true, ignore_alpha = 0.35 })
+-- The overview is a sheet of the same glass over the whole screen.
+hl.layer_rule({ match = { namespace = "diva-overview" }, blur = true, ignore_alpha = 0.35 })
 
 -- The bar, notifications and Omarchy's own menus are translucent in the Diva
 -- theme (theme/diva/shell.toml); blur what shows through them.
@@ -98,7 +100,7 @@ hl.animation({ leaf = "fadeShadow", enabled = true, speed = 4, bezier = "divaSof
 hl.animation({ leaf = "layersIn", enabled = true, speed = 3.6, bezier = "divaSpring", style = "popin 88%" })
 hl.animation({ leaf = "layersOut", enabled = true, speed = 2.4, bezier = "divaSoft", style = "fade" })
 hl.layer_rule({ match = { namespace = "^omarchy-(notifications|reminders)$" }, animation = "slide right" })
-hl.layer_rule({ match = { namespace = "^diva-(menu|companion)$" }, no_anim = true })
+hl.layer_rule({ match = { namespace = "^diva-(menu|companion|overview)$" }, no_anim = true })
 
 -- Three fingers move along the window ribbon; workspaces are chosen in
 -- Diva's overview. The scratchpad still drops in from above.
