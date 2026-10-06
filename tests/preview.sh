@@ -11,7 +11,7 @@ ln -s "${OMARCHY_PATH:-/usr/share/omarchy}/shell/Commons" "$staging/Commons"
 ln -s "${OMARCHY_PATH:-/usr/share/omarchy}/shell/Ui" "$staging/Ui"
 cp "$root/tests/preview.qml" "$staging/shell.qml"
 env -u QT_QPA_PLATFORMTHEME -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR="$staging/runtime" QT_QPA_PLATFORM=offscreen QT_QUICK_CONTROLS_STYLE=Basic qs -p "$staging/shell.qml" >"$staging/preview.log" 2>&1
-if rg 'Failed to load|Error loading|ReferenceError|TypeError|Error:|file:.*(Error|Warning)' "$staging/preview.log"; then
+if grep -E 'Failed to load|Error loading|ReferenceError|TypeError|Error:|file:.*(Error|Warning)' "$staging/preview.log"; then
   cat "$staging/preview.log"
   exit 1
 fi

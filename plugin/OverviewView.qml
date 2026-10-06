@@ -90,6 +90,11 @@ Item {
   signal floated(string address)
   signal ungrouped(string address)
   signal unstacked(string address)
+  signal pulledOut(string address)
+  // The view never sets `workspace` or `appFilter` itself: an assignment here
+  // would cut the binding from its owner, and the overview would then reopen
+  // on whichever workspace was last looked at. It asks, and the owner sets.
+  signal workspacePicked(int number)
 
   function viewFor(list) {
     var v = list.length ? views[list[0].monitor] : null
@@ -199,6 +204,17 @@ Item {
                     : "Cet écran est plein : elle commence le suivant  ·  Maj pour des onglets" }
       }
     }
+    // Dropped on nothing, away from what it shares: it leaves it.
+    if (!found && plan.editable && source) {
+      var leave = Desktop.leaveKind(plan, address)
+      if (leave) {
+        var lx = originX + leave.rect.x - scroll, ly = originY + leave.rect.y, away = 6
+        if (px < lx - away || px > lx + leave.rect.width + away || py < ly - away || py > ly + leave.rect.height + away)
+          found = { kind: "out", label: leave.kind === "tabs" ? "Lâche ici : elle sort des onglets"
+            : leave.kind === "screen" ? "Lâche ici : elle quitte cet écran partagé et retrouve toute sa place"
+            : "Lâche ici : elle retrouve sa propre colonne" }
+      }
+    }
     dropTarget = found
     hint = found ? found.label : ""
     nudge.direction = maxScroll > 0 && py > areaY ? (px < areaX + 50 ? -1 : px > areaX + areaW - 50 ? 1 : 0) : 0
@@ -206,11 +222,13 @@ Item {
   function dragEnded(address) {
     var target = dropTarget
     dragging = ""; dropTarget = null; hint = ""; nudge.direction = 0
-    if (!target) return
+    if (!target) return false
     if (target.kind === "workspace") windowMoved(address, target.id)
     else if (target.kind === "new") windowToNewWorkspace(address)
+    else if (target.kind === "out") pulledOut(address)
     else arranged(address, target.address, target.kind === "tabs" ? "group"
       : target.kind === "pair" || target.kind === "quarter" || target.kind === "beside" ? "pair" : target.kind)
+    return true
   }
   function dragCancelled() { dragging = ""; dropTarget = null; hint = ""; nudge.direction = 0 }
   // Near the side of a long ribbon, a dragged window makes it scroll.
@@ -237,7 +255,7 @@ Item {
   function cycle(by) {
     var ids = workspaces.map(function(w) { return w.id })
     var i = ids.indexOf(workspace)
-    if (ids.length) { appFilter = ""; workspace = ids[(Math.max(0, i) + by + ids.length) % ids.length] }
+    if (ids.length) workspacePicked(ids[(Math.max(0, i) + by + ids.length) % ids.length])
   }
   focus: true
   Keys.onPressed: function(event) {
@@ -258,7 +276,10 @@ Item {
     else if (event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) { if (t) closed(t.address) }
     else if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) { if (edit && !t.floating) widthChosen(t.address, Math.round(Desktop.nextWidth(t.share, 1) * 100)) }
     else if (event.key === Qt.Key_Minus) { if (edit && !t.floating) widthChosen(t.address, Math.round(Desktop.nextWidth(t.share, -1) * 100)) }
-    else if (event.key === Qt.Key_G) { var n = edit ? neighbour(-1) || neighbour(1) : null; if (n) arranged(t.address, n.address, "pair") }
+    else if (event.key === Qt.Key_G) {
+      if (edit && shift) pulledOut(t.address)
+      else { var n = edit ? neighbour(-1) || neighbour(1) : null; if (n) arranged(t.address, n.address, "pair") }
+    }
     else if (event.key === Qt.Key_T) {
       if (!edit) return
       if (t.members.length > 1 && shift) ungrouped(t.address)
@@ -267,7 +288,7 @@ Item {
     else if (event.key === Qt.Key_F) { if (edit) floated(t.address) }
     else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
       var id = event.key - Qt.Key_0
-      if (workspaces.some(function(w) { return w.id === id })) { appFilter = ""; workspace = id }
+      if (workspaces.some(function(w) { return w.id === id })) workspacePicked(id)
     }
     else event.accepted = false
   }
@@ -389,7 +410,7 @@ Item {
             onExited: dwell.stop()
             onClicked: root.workspaceActivated(space.modelData.id)
           }
-          Timer { id: dwell; interval: 140; onTriggered: { root.appFilter = ""; root.workspace = space.modelData.id } }
+          Timer { id: dwell; interval: 140; onTriggered: root.workspacePicked(space.modelData.id) }
         }
       }
       Rectangle {
@@ -453,7 +474,7 @@ Item {
       border.width: 1.5; border.color: Qt.rgba(0.92, 0.64, 0.75, 0.55)
       opacity: 0
       // Rebuilt with each layout: it fades in once the tiles have arrived.
-      readonly property bool shown: root.settled && root.active && root.dragging === "" && !root.resizing && !root.moving
+      readonly property bool shown: root.settled && root.active && !root.resizing && !root.moving
       onShownChanged: opacity = shown ? 1 : 0
       Component.onCompleted: opacity = shown ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: root.animate ? 180 : 0 } }
@@ -479,6 +500,26 @@ Item {
     OverviewTile { overview: root }
   }
 
+  // A window pulled away from what it shares: its frame says so.
+  Rectangle {
+    readonly property bool on: root.dropTarget !== null && root.dropTarget.kind === "out"
+    x: root.dragAtX - width / 2; y: root.dragAtY + 34
+    z: 70
+    width: outText.implicitWidth + 26; height: 30; radius: 15
+    color: Qt.rgba(0.13, 0.07, 0.12, 0.92)
+    border.width: 1; border.color: "#eaa3c0"
+    opacity: on ? 1 : 0
+    scale: on ? 1 : 0.9
+    Behavior on opacity { NumberAnimation { duration: root.animate ? 120 : 0 } }
+    Behavior on scale { enabled: root.animate; NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Text {
+      id: outText
+      anchors.centerIn: parent
+      text: "Seule"; textFormat: Text.PlainText
+      color: "#f6e9ef"; font.family: Style.font.family; font.pixelSize: 13; font.weight: Font.DemiBold
+    }
+  }
+
   // Where the window in hand will land.
   Rectangle {
     id: mark
@@ -487,7 +528,9 @@ Item {
     readonly property bool side: on && (t.kind === "before" || t.kind === "after")
     property var last: ({ kind: "group", x: 0, y: 0, width: 0, height: 0 })
     onTChanged: if (on) last = t
-    readonly property var g: on ? t : last
+    // Never null, even for the instant between a target going away and
+    // `on` catching up.
+    readonly property var g: t !== null && t.address !== undefined ? t : last
     x: g.kind === "before" ? g.x - 5 : g.kind === "after" ? g.x + g.width - 5 : g.kind === "stack" ? g.x + 10 : g.x + g.width * 0.16
     y: g.kind === "stack" ? g.y + g.height * 0.6 : side || !on && (last.kind === "before" || last.kind === "after") ? g.y + 8 : g.y + g.height * 0.16
     width: g.kind === "before" || g.kind === "after" ? 10 : g.kind === "stack" ? g.width - 20 : g.width * 0.68
@@ -566,7 +609,7 @@ Item {
     width: Math.max(0, bubble.x - 72)
     visible: width > 260
     text: root.appFilter ? "←  →  choisir    Entrée  ouvrir    Échap  revenir"
-      : "←  →  choisir    Maj + ←  →  déplacer    +  −  largeur    G  côte à côte    T  onglets    Suppr  fermer    Tab  espace suivant"
+      : "←  →  choisir    Maj + ←  →  déplacer    +  −  largeur    G  côte à côte    Maj + G  séparer    T  onglets    Suppr  fermer    Tab  espace suivant"
     textFormat: Text.PlainText
     wrapMode: Text.WordWrap
     color: "#9c8291"

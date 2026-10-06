@@ -42,13 +42,27 @@ Item {
     if (signature !== dockSignature) { dock = Desktop.dock(windows, apps, pinned); dockSignature = signature }
   }
   Component.onCompleted: update()
-  // Snapshot outside native model destruction signals; prevents repeaters
-  // from reading a Wayland object during its removal callback.
-  Timer { interval: 700; repeat: true; running: true; onTriggered: root.update() }
+  // Snapshots are taken from timers, outside native model destruction
+  // signals, so repeaters never read a Wayland object during its removal
+  // callback. They are driven by what Hyprland reports rather than by a fast
+  // poll: an idle desktop does no work here beyond a slow safety tick, which
+  // also catches what Hyprland does not announce (a column moved by a
+  // keyboard shortcut) and newly installed applications.
+  Timer { interval: 5000; repeat: true; running: true; onTriggered: root.refresh() }
   Timer { interval: 320; repeat: true; running: root.live; onTriggered: root.refresh() }
   // The dock follows the order of the windows, so positions are re-read
   // whenever Hyprland reports that something moved, opened, closed or took focus.
-  Connections { target: Hyprland; function onRawEvent(event) { moved.restart() } }
-  Timer { id: moved; interval: 220; onTriggered: root.refresh() }
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      // A title that changes (a terminal's spinner does, every second) needs
+      // no new geometry: one cheap snapshot a second at most. Anything else
+      // re-reads positions, at most four times a second.
+      if (String(event.name).indexOf("windowtitle") === 0) { if (!titled.running) titled.start() }
+      else if (!moved.running) moved.start()
+    }
+  }
+  Timer { id: moved; interval: 250; onTriggered: root.refresh() }
+  Timer { id: titled; interval: 1000; onTriggered: root.update() }
   Timer { id: settle; interval: 90; onTriggered: root.update() }
 }

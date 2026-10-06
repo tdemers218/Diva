@@ -129,6 +129,9 @@ Item {
       root.pendingAddress = ""; root.pendingWorkspace = 0
     }
   }
+  // A change that never returns must not keep the keyboard away from the
+  // overview (Escape would stop working): it is abandoned after a few seconds.
+  Timer { interval: 5000; running: change.running; onTriggered: change.running = false }
   // What Diva said about the last change fades back to her usual tip.
   Timer { id: forget; interval: 3600; onTriggered: root.status = "" }
   Process {
@@ -215,8 +218,7 @@ Item {
       monitorName: root.activeScreen ? root.activeScreen.name : ""
       monitorX: root.monitor ? root.monitor.lastIpcObject.x || 0 : 0
       monitorY: root.monitor ? root.monitor.lastIpcObject.y || 0 : 0
-      onWorkspaceChanged: root.workspace = workspace
-      onAppFilterChanged: root.appFilter = appFilter
+      onWorkspacePicked: function(number) { root.appFilter = ""; root.workspace = number }
       onDismissed: root.hide()
       onActivated: function(address) { root.pendingAddress = address; root.hide() }
       onWorkspaceActivated: function(number) { root.pendingWorkspace = number; root.hide() }
@@ -237,6 +239,7 @@ Item {
       onClosed: function(address) { root.act(["close-address", address], "Fenêtre fermée.") }
       onFloated: function(address) { root.act(["float-address", address], "C'est fait.") }
       onUngrouped: function(address) { root.act(["ungroup", address], "Elle a retrouvé sa propre place.") }
+      onPulledOut: function(address) { root.act(["alone", address], "Voilà, elle a retrouvé sa place à elle.") }
       onUnstacked: function(address) { root.act(["own-column", address], "Elle a sa colonne à elle.") }
       onWorkspaceAdded: {
         var id = root.freeSpace()

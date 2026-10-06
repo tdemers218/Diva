@@ -97,7 +97,7 @@ json_edit() {
 
 preflight() {
   local cmd
-  for cmd in jq git rsync hyprctl omarchy omarchy-shell omarchy-theme-set; do
+  for cmd in jq git rsync hyprctl qs omarchy omarchy-shell omarchy-theme-set; do
     command -v "$cmd" >/dev/null || fail "missing required command: $cmd"
   done
   [[ $EUID -ne 0 ]] || fail "run this as the desktop user, not root"
@@ -542,6 +542,9 @@ cmd_test() {
   bash -n "$PLUGIN_SRC/bin/diva-screensaver-launch"
   bash -n "$PLUGIN_SRC/bin/diva-doctor"
   "$ROOT/tests/test_hypr.sh"
+  "$ROOT/tests/test_power.sh"
+  "$ROOT/tests/test_doctor.sh"
+  "$ROOT/tests/test_run.sh"
   python3 "$ROOT/tests/test_wallpapers.py"
   python3 "$ROOT/tests/test_install.py"
   "$ROOT/tests/preview.sh"

@@ -71,14 +71,23 @@ reading() {
     '{onBattery: $on, percent: ($percent | tonumber? // 100), minutes: ($minutes | tonumber? // -1), watts: ($watts | tonumber? // 0)}'
 }
 
+# The level the battery calls for. Going up a level happens at the
+# thresholds; coming back down needs a margin past them (5 points of charge,
+# and a clearly longer estimate), so an estimate that wavers around a
+# threshold does not flip the desktop back and forth every minute.
 level_for() {
-  local mode
+  local mode was
   mode=$(jq -r '.power.mode // "auto"' "$CONFIG" 2>/dev/null || echo auto)
-  jq -r --arg mode "$mode" '
+  was=$(get .level)
+  [[ $was =~ ^[0-3]$ ]] || was=0
+  jq -r --arg mode "$mode" --argjson was "$was" '
+    def short($m): .minutes >= 0 and .minutes < $m;
     if (.onBattery | not) or $mode == "off" then 0
     elif $mode == "always" then 3
-    elif .percent <= 20 or (.minutes >= 0 and .minutes < 45) then 3
-    elif .percent <= 50 or (.minutes >= 0 and .minutes < 150) then 2
+    elif .percent <= 20 or short(45) then 3
+    elif $was >= 3 and (.percent <= 25 or short(60)) then 3
+    elif .percent <= 50 or short(150) then 2
+    elif $was >= 2 and (.percent <= 55 or short(180)) then 2
     else 1 end' <<<"$1"
 }
 
@@ -174,8 +183,13 @@ move_to() {
   if (( level >= 1 && level == was )) && [[ $(hyprctl getoption decoration:shadow:enabled 2>/dev/null | head -n1) == *true ]]; then
     hypr_cuts "$level"
   fi
-  if (( level >= 2 )); then cut_profile; cut_bluetooth; cut_dim dim 15 ""; else back_dim dim; back_bluetooth; back_profile; fi
+  # Cuts go on mildest first and come off in the reverse order. The screen
+  # is dimmed at level 2 and capped at level 3, each remembering what it
+  # found: the cap has to be lifted before the dimming is, or the dimming
+  # would see a brightness it did not set and leave it there.
+  if (( level >= 2 )); then cut_profile; cut_bluetooth; cut_dim dim 15 ""; fi
   if (( level >= 3 )); then cut_dim cap "" 40; cut_keyboard; else back_keyboard; back_dim cap; fi
+  if (( level < 2 )); then back_dim dim; back_bluetooth; back_profile; fi
   put --argjson level "$level" '.level = $level'
 }
 

@@ -360,10 +360,10 @@ Item {
     root.pendingConfirm = ""
     var result = Smart.outcome(tile)
     if (runner.running) {
-      // Something is still being checked: do this one without the check.
-      Quickshell.execDetached(argv)
-      root.reply = said || result.reply
-      if (result.stay) replyTimer.restart(); else root.dismiss()
+      // Something is still being checked: this one waits its turn and gets
+      // its own check, instead of being fired off unverified.
+      root.waiting = root.waiting.concat([{ tile: tile, said: said }])
+      if (!result.stay) root.dismiss()
       return
     }
     root.running = { tile: tile, said: said, reply: result.reply, stay: result.stay }
@@ -379,15 +379,36 @@ Item {
     }
   }
 
-  // bin/diva-run has checked the action that was running.
+  // Actions asked for while another was still being checked, in order.
+  property var waiting: []
+  // bin/diva-run has checked the action that was running; then the next one
+  // waiting, if any, takes its turn.
   function ran(text) {
+    root.judge(text)
+    if (root.waiting.length && !runner.running) {
+      var next = root.waiting[0]
+      root.waiting = root.waiting.slice(1)
+      root.run(next.tile, next.said)
+    }
+  }
+  // Three outcomes: verified (seen to have worked), launched (ran, nothing
+  // says it failed, effect not observable) and failed. An answer that cannot
+  // be read is neither a success nor a failure: nothing is learned from it
+  // and Diva does not claim it worked.
+  function judge(text) {
     var done = root.running
     root.running = null
     if (!done) return
     var r = null
     try { r = JSON.parse(String(text).trim()) } catch (e) { r = null }
-    var ok = !r || r.ok !== false
-    var verified = !!r && r.verified === true
+    if (!r || typeof r.ok !== "boolean") {
+      root.pendingLearn = null
+      if (done.stay) { root.reply = "C'est lancé, mais je n'ai pas pu vérifier que ça a marché."; replyTimer.restart(); stateTimer.restart() }
+      if (root.task) root.task = null
+      return
+    }
+    var ok = r.ok !== false
+    var verified = r.verified === true
     if (ok && verified && root.pendingLearn && root.pendingLearn.tile === done.tile)
       root.learn(root.pendingLearn.text, done.tile)
     root.pendingLearn = null
@@ -623,7 +644,7 @@ Item {
       root.phase = "inspect"
       root.step("vérification de l'ordinateur")
       doctor.todo = "inspect"
-      doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect"]
+      doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect", Smart.symptomAreas(t.request)]
       doctor.running = true
       return
     }
@@ -694,7 +715,7 @@ Item {
         // Fixed. Look again: there may have been more than one thing wrong.
         root.phase = "inspect"
         doctor.todo = "recheck"
-        doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect"]
+        doctor.command = [root.pluginDir + "/bin/diva-doctor", "inspect", Smart.symptomAreas(t.request)]
         doctor.running = true
       } else if (!root.escalate("la réparation « " + t.pending + " » n'a pas suffi")) {
         // Already on her glasses: one more look, within the repair limit.
@@ -713,8 +734,11 @@ Item {
       root.task = null
       root.flash = "love"
       flashTimer.restart()
+      // What she complained about is fixed: stop there. Anything wrong
+      // elsewhere is mentioned, not repaired uninvited.
+      var aside = r && r.elsewhere && r.elsewhere.length ? " Au passage, j'ai remarqué autre chose : " + r.elsewhere[0] + "." : ""
       root.answerInChat(left > 0 ? "J'ai réparé ce que je pouvais, mais il reste un souci : " + r.problems[0] + "."
-                                 : "Et voilà, j'ai vérifié : tout est réparé.")
+                                 : "Et voilà, j'ai vérifié : c'est réparé." + aside)
       stateTimer.restart()
     } else if (what === "report") {
       root.phase = ""

@@ -119,6 +119,17 @@ TestCase {
     compare(Desktop.screens(m,"")[0].count,4)
     compare(Desktop.joinKind(m,"e","a"),"beside")
   }
+  function test_what_a_window_can_be_pulled_out_of() {
+    var m = Desktop.map([win("a",16,16,659,703),win("b",691,16,659,344),win("c",691,376,659,343),win("d",1366,16,1328,344),win("e",1366,376,1328,343),
+                         win("f",2710,16,1328,703),win("g",4054,44,1328,675,{grouped:["g","h"]}),win("h",4054,44,1328,675,{grouped:["g","h"]})],screen,{width:1270,height:460},0.2)
+    compare(Desktop.leaveKind(m,"a").kind,"screen")
+    compare(Desktop.leaveKind(m,"c").kind,"screen")
+    fuzzyCompare(Desktop.leaveKind(m,"c").rect.width,(691+659-16)*m.scale,0.001)
+    compare(Desktop.leaveKind(m,"d").kind,"stack")
+    fuzzyCompare(Desktop.leaveKind(m,"d").rect.height,703*m.scale,0.001)
+    compare(Desktop.leaveKind(m,"f"),null)
+    compare(Desktop.leaveKind(m,"g").kind,"tabs")
+  }
   function test_drop_zones() {
     compare(Desktop.dropZone(20,200,400,400,false),"before")
     compare(Desktop.dropZone(380,200,400,400,false),"after")

@@ -406,7 +406,7 @@ var GUIDE = [
   { id: "switch", title: "Passer d'une fenêtre à l'autre", glyph: "layers", phrases: ["changer fenetre", "passer fenetre", "autre fenetre", "retrouver fenetre", "ou est fenetre", "fenetre disparu"],
     text: "{Focus on next window|Alt + Tab} passe à la fenêtre suivante, et Super avec une flèche va vers celle d'à côté. Sinon ouvre « Mes fenêtres » ici, ou tape le nom de l'application." },
   { id: "overview", title: "Ranger mes fenêtres dans la vue d'ensemble", glyph: "grid", phrases: ["vue ensemble", "vue d ensemble", "ranger fenetres", "organiser fenetres", "grouper fenetres", "onglets fenetres", "mes espaces", "voir toutes fenetres", "empiler fenetres"],
-    text: "Glisse quatre doigts vers le haut, ou pose la souris tout en haut de l'écran : toutes tes fenêtres apparaissent, à leur vraie taille en petit. Glisse une fenêtre au milieu d'une autre pour qu'elles se partagent l'écran : deux moitiés, puis une moitié et deux quarts, puis quatre quarts. Sur son côté, elle se range juste avant ou après ; en bas, elle s'empile ; sur un espace, elle y part. En tenant Maj, elles deviennent des onglets à la même place. Tire son bord droit pour changer sa largeur, et clique-la pour y retourner." },
+    text: "Glisse quatre doigts vers le haut, ou pose la souris tout en haut de l'écran : toutes tes fenêtres apparaissent, à leur vraie taille en petit. Glisse une fenêtre au milieu d'une autre pour qu'elles se partagent l'écran : deux moitiés, puis une moitié et deux quarts, puis quatre quarts. Sur son côté, elle se range juste avant ou après ; en bas, elle s'empile ; sur un espace, elle y part. En tenant Maj, elles deviennent des onglets à la même place. Pour les séparer, tire la fenêtre hors de son cadre et lâche-la dans le vide : elle retrouve toute sa place. Tire son bord droit pour changer sa largeur, et clique-la pour y retourner." },
   { id: "workspaces", title: "Les espaces de travail", glyph: "grid", phrases: ["espaces", "espace travail", "bureaux", "changer espace", "changer bureau", "c est quoi espaces"],
     text: "Les espaces sont comme plusieurs bureaux, numérotés en haut de l'écran. {Switch to workspace 2|Super + 2} va sur le deuxième (n'importe quel chiffre marche), {Move window to workspace 2|Super + Maj + 2} y envoie la fenêtre, et trois doigts glissés sur le pavé passent de l'un à l'autre." },
   { id: "trackpad", title: "Le pavé tactile", glyph: "gesture", phrases: ["pave tactile", "trackpad", "touchpad", "gestes", "clic droit pave", "defiler"],
@@ -825,7 +825,9 @@ var ACTION_CHECKS = { "browser": "launch", "files": "launch", "downloads": "laun
 
 function check(tile) {
   if (tile.kind === "action") return ACTION_CHECKS[tile.id] || "none"
-  if (tile.kind === "app" || tile.kind === "url" || tile.kind === "search") return "launch"
+  // An app is checked against its own windows, not any window that moves.
+  if (tile.kind === "app") return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(String(tile.id)) ? "launch:" + tile.id : "launch"
+  if (tile.kind === "url" || tile.kind === "search") return "launch"
   if (tile.kind === "volume") return "state:volume:=" + clampPercent(tile.percent)
   if (tile.kind === "brightness") return "state:brightness:=" + Math.max(1, clampPercent(tile.percent))
   if (tile.kind === "window") return /^0x[0-9a-f]{4,16}$/.test(tile.id) ? "focus:" + tile.id : "none"
@@ -835,6 +837,21 @@ function check(tile) {
     if (tile.id === "fullscreen" || tile.id === "maximize") return "fullscreen"
   }
   return "none"
+}
+
+// Which parts of the computer a complaint is about: "sound", "network",
+// "bluetooth", "diva", joined by commas, or "" when it does not say. The
+// troubleshooter then treats a silenced speaker as the fault for "je n'ai
+// plus de son", and as her own business for "Internet ne marche pas".
+function symptomAreas(text) {
+  var t = String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), areas = []
+  // Whole words or their beginnings: "son", not "personne".
+  function has(words) { return new RegExp("(^|[^a-z])(" + words.join("|") + ")").test(t) }
+  if (has(["son", "entend", "musique", "haut-parleur", "haut parleur", "audio", "micro", "ecouteur", "casque", "enceinte", "volume", "muet"])) areas.push("sound")
+  if (has(["internet", "wifi", "wi-fi", "reseau", "connexion", "connecte pas", "en ligne", "site", "page ne"])) areas.push("network")
+  if (has(["bluetooth", "ecouteur", "casque", "enceinte", "souris sans fil", "clavier sans fil", "manette", "appareil"])) areas.push("bluetooth")
+  if (has(["barre", "menu", "diva", "raccourci", "reglage", "extension"])) areas.push("diva")
+  return areas.join(",")
 }
 
 // What Diva says after running a tile, and whether her menu stays open.

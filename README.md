@@ -71,11 +71,12 @@ Dans cette vue, l'espace choisi est dessiné à l'échelle : chaque fenêtre est
 - Survoler un espace pour le regarder, puis cliquer pour y entrer.
 - Glisser une fenêtre sur un espace pour la déplacer, ou sur **+** pour lui donner un nouvel espace. **+** seul prépare un espace vide.
 - **Partager l'écran** : glisser une fenêtre au milieu d'une autre. Elles prennent chacune une moitié ; une troisième prend un quart (une moitié, deux quarts), une quatrième donne quatre quarts. Un écran plein envoie la suivante juste à côté. Un cadre **Duo**, **Trio** ou **Quatuor** entoure les fenêtres qui partagent un écran.
+- **Séparer** : glisser une fenêtre hors du cadre de son écran partagé et la lâcher dans le vide. Elle retrouve toute la largeur, juste à droite, et celles qui restent se réorganisent : une fenêtre seule reprend tout l'écran, deux fenêtres restées empilées deviennent deux moitiés. Le même geste sort une fenêtre d'une pile. Pour des onglets, tirer l'icône de l'onglet hors de la fenêtre.
 - **Ranger** : déposer sur le côté gauche ou droit d'une fenêtre place avant ou après ; en bas, la fenêtre s'empile dessous.
 - **Onglets** (plusieurs fenêtres à la même place) : maintenir **Maj** en déposant au milieu. C'est volontairement un geste de plus que le partage d'écran.
 - **Redimensionner** : tirer le bord droit d'une fenêtre ; la largeur s'accroche à un tiers, la moitié, deux tiers ou tout l'écran. Une fenêtre flottante se redimensionne par son coin.
 - Au survol, des boutons proposent les largeurs courantes, de laisser flotter, de sortir des onglets et de fermer.
-- Au clavier : flèches pour choisir, Maj + flèches pour déplacer la colonne, **+** et **−** pour la largeur, **G** pour partager l'écran avec la voisine, **T** pour des onglets, **F** pour flotter, Suppr pour fermer, Tab ou un chiffre pour changer d'espace, Entrée pour ouvrir.
+- Au clavier : flèches pour choisir, Maj + flèches pour déplacer la colonne, **+** et **−** pour la largeur, **G** pour partager l'écran avec la voisine, Maj + **G** pour l'en séparer, **T** pour des onglets, **F** pour flotter, Suppr pour fermer, Tab ou un chiffre pour changer d'espace, Entrée pour ouvrir.
 - Fermer avec Échap ou un geste vers le bas avec quatre doigts.
 
 Diva, dans le coin, annonce ce qu'un geste va faire avant de lâcher la fenêtre.
@@ -130,7 +131,7 @@ Diva dispose d'un diagnostic et d'une liste limitée de réparations. Elle peut 
 
 Les réparations agissent sur les réglages et services prévus ; elles ne réécrivent pas les sources de Diva. Le bouton **Arrêter** est prévu pour interrompre la tâche en cours, mais son comportement doit encore être validé en session réelle.
 
-La vérification des actions reste partielle dans cette version. Une action lancée n'est pas nécessairement terminée ni réussie ; les limites connues sont détaillées dans la partie développement.
+La vérification des actions reste partielle dans cette version. Diva distingue maintenant ce qu'elle a vu réussir, ce qu'elle a seulement lancé et ce qui a échoué ; une action lancée n'est pas nécessairement terminée ni réussie. Les limites connues sont détaillées dans la partie développement.
 
 ### Économiser la batterie
 
@@ -142,7 +143,7 @@ Diva applique progressivement une politique d'économie. Dans les réglages, cho
 | 2 | Charge ≤ 50 % ou autonomie estimée < 2 h 30 | Suppression du flou et des transparences, profil `power-saver`, Bluetooth éteint s'il n'est pas utilisé, luminosité réduite de 15 points si elle dépasse 60 % |
 | 3 | Charge ≤ 20 % ou autonomie estimée < 45 min | Animations du compositeur désactivées, luminosité plafonnée à 40 %, rétroéclairage du clavier éteint |
 
-L'estimation dépend de l'utilisation récente. Au branchement, Diva tente de restaurer les réglages enregistrés. **Un bug de restauration de luminosité est connu en 0.13.0** : après le niveau 3, l'écran peut revenir à une valeur intermédiaire plutôt qu'à sa valeur initiale.
+L'estimation dépend de l'utilisation récente. Au branchement, Diva tente de restaurer les réglages enregistrés. Le bug de restauration de luminosité de la 0.13.0 (retour à une valeur intermédiaire après le niveau 3) est corrigé ; la correction est testée avec un portable simulé, pas encore sur une vraie décharge.
 
 Le gain d'autonomie par rapport à Omarchy seul n'a pas encore été mesuré sur une décharge réelle.
 
@@ -170,7 +171,7 @@ La désinstallation est conçue pour retirer les éléments gérés par Diva et 
 - Dans la vue d'ensemble, les glissers, le redimensionnement et les aperçus du dock ont été essayés avec une souris simulée ; Maj pendant un glisser, les touches **G** et **T**, les gestes du pavé tactile et plusieurs écrans restent à essayer à la main.
 - Certaines interactions, réparations et installations restent à essayer manuellement. La lecture Netflix et l'installation complète de Stremio ne sont pas entièrement validées.
 - L'installation neuve, la locale française, la veille/reprise et l'autonomie sur le portable cible restent à tester.
-- Les problèmes de vérification, de diagnostic et de restauration listés ci-dessous sont encore ouverts.
+- Les corrections de vérification, de diagnostic et de restauration listées ci-dessous sont faites mais pas encore validées en usage réel.
 
 ## Développement et maintenance
 
@@ -261,20 +262,20 @@ Les outils actuels travaillent sans simuler la frappe ou la souris. Si un contr�
 
 ### Corrections prioritaires
 
-Ces constats proviennent de la revue du **6 octobre 2026**, sur le commit `507b4fb`. Ils décrivent des problèmes ouverts, pas des correctifs déjà appliqués.
+La revue du **6 octobre 2026**, sur le commit `507b4fb`, a relevé six problèmes. Ils sont corrigés dans le code depuis ; ce tableau garde le constat, ce qui a été fait et ce qui reste à valider. Les essais cités sont automatisés avec des commandes simulées, sauf mention contraire : aucun n'a encore eu lieu sur une vraie décharge ni sur le portable cible.
 
-| Priorité | Constat | Correction et critère de validation |
-| --- | --- | --- |
-| Haute | Restauration de luminosité dans le mauvais ordre | Annuler le plafond avant la réduction. Reproduction isolée : 80 → 65 → 40 → branchement donne actuellement 65, au lieu de 80. Tester aussi une modification manuelle et les transitions 3 → 2 → 0. |
-| Haute | Résultat d'action trop optimiste | `diva-run none -- false` renvoie actuellement `ok:true`. Contrôler le code de sortie quand il est disponible, distinguer lancé / vérifié / échec et traiter une réponse illisible comme indéterminée. |
-| Haute | Deuxième action sans vérification | `Diva.qml` utilise l'exécution détachée si une vérification est en cours. Sérialiser ou mettre en attente les actions, avec un résultat propre à chacune. |
-| Haute | Diagnostic des états volontaires | `diva-doctor` classe Bluetooth éteint, Wi-Fi éteint et silence comme des anomalies sans connaître leur intention. Prendre en compte la politique batterie et le symptôme demandé ; s'arrêter quand celui-ci est résolu. |
-| Moyenne | Critères de réussite trop larges | Une ouverture est validée par un changement quelconque de fenêtres ou de focus. Relier la vérification à l'application ou à la fenêtre visée, y compris si l'utilisateur interagit en parallèle. |
-| Moyenne | Consommation permanente à examiner | Le dock et le bureau ont chacun un modèle qui échantillonne toutes les 700 ms ; les effets de l'écran de veille utilisent 60 images/s. Étudier un modèle partagé, des mises à jour déclenchées par les changements et un rendu réduit ou statique sur batterie. Mesurer avant de conclure. |
+| Priorité | Constat | Correction | Reste à valider |
+| --- | --- | --- | --- |
+| Haute | Restauration de luminosité dans le mauvais ordre | Le plafond du niveau 3 est levé avant la réduction du niveau 2. `tests/test_power.sh` couvre 80 → 65 → 40 → branchement = 80, les transitions 3 → 2 → 1, un changement manuel de luminosité ou de profil (conservé), et un écran déjà sombre. | Une vraie décharge ; le rétroéclairage et le Bluetooth changés à la main. |
+| Haute | Résultat d'action trop optimiste | `diva-run` renvoie un `state` : `verified`, `launched` ou `failed`, et lit le code de sortie de la commande quand rien n'est observable (`none -- false` échoue). Une réponse illisible est traitée comme indéterminée : rien n'est appris et Diva ne dit pas que c'est fait. `tests/test_run.sh`. | Les rappels et installations n'ont toujours que le code de sortie comme preuve. |
+| Haute | Deuxième action sans vérification | Une action demandée pendant une vérification attend son tour et reçoit sa propre vérification ; plus d'exécution détachée dans ce cas. | À essayer à la main : aucun test automatisé ne couvre la file. |
+| Haute | Diagnostic des états volontaires | `diva-doctor inspect [domaines]` sépare `problems` (ce qui concerne la plainte), `choices` (son coupé, Wi-Fi ou Bluetooth éteint sans rapport avec elle, avec la mention de l'économie de batterie quand c'est Diva qui a éteint) et `elsewhere` (vraies anomalies ailleurs, signalées mais non réparées). Le dépannage s'arrête quand la plainte est résolue. `tests/test_doctor.sh`. | La reconnaissance du domaine repose sur des mots-clés ; à éprouver avec de vraies phrases et de vrais appels au modèle. |
+| Moyenne | Critères de réussite trop larges | L'ouverture d'une application est vérifiée sur une fenêtre de cette application (`launch:<id>`), pas sur n'importe quel changement. Essayé en session : une autre fenêtre qui apparaît ne valide plus. | Les liens et recherches gardent l'ancien critère ; les applications dont la classe de fenêtre diffère de leur identifiant restent « lancées » sans preuve. |
+| Moyenne | Consommation permanente | Les deux modèles de fenêtres ne sondent plus toutes les 700 ms : ils suivent les événements d'Hyprland, avec un passage de sécurité toutes les 5 s. L'écran de veille tourne à 20 images/s sur batterie au lieu de 60. | Le modèle n'est pas encore partagé entre le dock et le bureau. Une seule mesure, sur le compte de test au repos : le temps processeur de la coquille est passé d'environ 17 % à 2 % d'un cœur, mais la valeur de départ incluait une version intermédiaire plus coûteuse que la 0.13. À refaire proprement, sur batterie. |
+
+Les paliers d'économie ont maintenant une marge au retour (5 points de charge, estimation nettement plus longue), pour qu'une autonomie estimée qui oscille autour d'un seuil ne fasse pas basculer le bureau chaque minute.
 
 Préserver la protection qui reporte l'apprentissage jusqu'à une réussite vérifiée. Compléter les vérifications pour les rappels, installations et autres actions actuellement sans contrôle observable.
-
-Pour l'économie d'énergie, tester aussi le respect des changements manuels de profil, de Bluetooth et de rétroéclairage, ainsi que la stabilité des paliers lorsque l'autonomie estimée fluctue.
 
 ### Validation avant livraison
 
@@ -286,7 +287,7 @@ bin/diva status
 tests/preview.sh
 ```
 
-La commande de test requiert notamment Qt Test à `/usr/lib/qt6/bin/qmltestrunner`, Quickshell et les composants Omarchy. Les aperçus isolés sont produits dans `/tmp/diva-*.png` ; ils ne remplacent pas un essai dans la session réelle.
+`bin/diva test` lance aussi `tests/test_power.sh`, `tests/test_doctor.sh` et `tests/test_run.sh`, qui remplacent les commandes du système par des doublures. La commande de test requiert notamment Qt Test à `/usr/lib/qt6/bin/qmltestrunner`, Quickshell et les composants Omarchy. Les aperçus isolés sont produits dans `/tmp/diva-*.png` ; ils ne remplacent pas un essai dans la session réelle.
 
 La revue du 6 octobre a exécuté avec succès **43 tests de logique, soit 636 assertions**, via une adaptation Node des tests actions/bureau, **2 tests Python** de fonds d'écran et le contrôle syntaxique de **13 scripts Bash**. Les problèmes de luminosité et de commande échouée ont été reproduits avec des commandes simulées. Le rendu QML et la session Omarchy n'ont pas été exécutés dans cet environnement de revue.
 
@@ -306,7 +307,7 @@ Comparer ensuite **Omarchy seul et Omarchy avec Diva** sur le HP cible, avec la 
 
 ### Prochaines étapes
 
-La phase actuelle privilégie la fiabilité, la cohérence et l'autonomie. Les corrections prioritaires et les essais réels passent avant l'ajout de nouvelles fonctions.
+La phase actuelle privilégie la fiabilité, la cohérence et l'autonomie. Les corrections prioritaires sont faites ; ce sont maintenant les essais réels de la liste ci-dessus qui passent avant l'ajout de nouvelles fonctions.
 
 Après cette validation :
 

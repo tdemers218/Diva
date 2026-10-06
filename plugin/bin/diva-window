@@ -18,6 +18,8 @@
 #   diva-window resize-address <0xaddr> <dx> <dy>   floating windows only
 #   diva-window arrange <0xaddr> <0xtarget> before|after|stack|pair|group
 #     pair shares a screen (halves, then quarters); group makes tabs
+#   diva-window alone <0xaddr>                out of its tabs, or out of the
+#     screen or column it shares, back to a full-width place of its own
 #
 # Unless --now is given, it waits a moment first: Diva's menu is closing, and
 # the window she was called from must be the active one again.
@@ -184,6 +186,68 @@ pair() {
   fi
 }
 
+# Take src out of what it shares. From tabs, it simply leaves them. From a
+# shared screen it moves to the right of that screen at full width, and what
+# stays behind closes up: a window left alone gets the whole screen back, two
+# left stacked in one half become two halves. From a plain stack it gets a
+# column of its own.
+alone() {
+  local screen x w n first last i=0 mine=-1 partner=-1 sx
+  local -a xs ws ns firsts lasts
+  if [[ $(fact '.[] | select(.address == $s) | .grouped | length') -gt 1 ]]; then
+    leave_group "$src"
+    return
+  fi
+  [[ $(fact '.[] | select(.address == $s) | .floating') == true ]] && return 0
+  screen=$(hyprctl monitors -j | jq -r --argjson m "$(fact '.[] | select(.address == $s) | .monitor')" \
+    '.[] | select(.id == $m) | ((if (.transform % 2) == 1 then .height else .width end) / .scale | floor)')
+  [[ $screen =~ ^[0-9]+$ ]] || return 1
+  # Columns left to right, for each the first window that is not src.
+  while read -r x w n first last; do
+    xs+=("$x") ws+=("$w") ns+=("$n") firsts+=("$first") lasts+=("$last")
+  done < <(fact '(.[] | select(.address == $s)) as $a
+    | [.[] | select(.workspace.id == $a.workspace.id and (.floating | not))]
+    | group_by(.at[0]) | .[] | sort_by(.at[1])
+    | "\(.[0].at[0]) \(.[0].size[0]) \(map(.at[1]) | unique | length) \([.[] | select(.address != $s)][0].address // "-") \([.[] | select(.address != $s)][-1].address // "-")"')
+  sx=$(fact '.[] | select(.address == $s) | .at[0]')
+  is_half() { ((ws[$1] * 100 > screen * 40 && ws[$1] * 100 < screen * 60)); }
+  while ((i < ${#xs[@]})); do
+    if ((i + 1 < ${#xs[@]})) && is_half $i && is_half $((i + 1)); then
+      [[ ${xs[i]} == "$sx" ]] && mine=$i partner=$((i + 1))
+      [[ ${xs[i + 1]} == "$sx" ]] && mine=$((i + 1)) partner=$i
+      i=$((i + 2))
+    else
+      [[ ${xs[i]} == "$sx" ]] && mine=$i
+      i=$((i + 1))
+    fi
+  done
+  ((mine >= 0)) || return 1
+  if ((partner < 0)); then
+    # Not a shared screen: only a stack to step out of.
+    ((ns[mine] > 1)) || return 0
+    with_focus "$src" 'hl.dispatch(hl.dsp.layout("promote"))'
+    return
+  fi
+  if ((ns[mine] > 1)); then
+    # A quarter leaves; the screen keeps its two halves.
+    with_focus "$src" 'hl.dispatch(hl.dsp.layout("promote"))' || return 1
+    sleep 0.12
+    if ((mine < partner)); then dst=${lasts[partner]}; place after || return 1; sleep 0.12; fi
+    with_focus "$src" 'hl.dispatch(hl.dsp.layout("colresize 1.00"))'
+    return
+  fi
+  # A whole half leaves: it goes to the right of what stays.
+  if ((mine < partner)); then dst=${lasts[partner]}; place after || return 1; sleep 0.12; fi
+  with_focus "$src" 'hl.dispatch(hl.dsp.layout("colresize 1.00"))' || return 1
+  if ((ns[partner] == 1)); then
+    with_focus "${firsts[partner]}" 'hl.dispatch(hl.dsp.layout("colresize 1.00"))'
+  else
+    with_focus "${lasts[partner]}" 'hl.dispatch(hl.dsp.layout("promote"))' || return 1
+    sleep 0.12
+    half "${firsts[partner]}" && half "${lasts[partner]}"
+  fi
+}
+
 case "$op" in
 move-address)
   [[ $arg =~ ^0x[0-9a-f]{4,16}$ && ${3:-} =~ ^([1-9][0-9]?|100)$ ]] || exit 2
@@ -214,6 +278,12 @@ own-column)
 width)
   address "$arg" && [[ ${3:-} =~ ^([2-9][0-9]|100)$ ]] || exit 2
   with_focus "$arg" "hl.dispatch(hl.dsp.layout(\"colresize $(awk -v p="$3" 'BEGIN { printf "%.2f", p / 100 }')\"))"
+  exit
+  ;;
+alone)
+  address "$arg" || exit 2
+  src=$arg dst=$arg
+  alone
   exit
   ;;
 arrange)

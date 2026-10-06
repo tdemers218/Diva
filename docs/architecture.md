@@ -195,6 +195,16 @@ the T key. `Desktop.dock()` orders running apps by `inOrder` (workspace, then
 left edge, then top), and `DesktopModel` re-reads positions on Hyprland events so
 the dock follows a rearrangement.
 
+`alone <window>` is the way back out, reached by dropping a dragged tile on
+nothing once the pointer has left the rectangle of what it shares
+(`Desktop.leaveKind`: its tab group, its shared screen, or its stack), or with
+Shift + G. Out of a shared screen the window goes to the right of it at full
+width and the rest closes up: one window left gets the full width, two left
+stacked in one half are split into two halves. A tab is taken out by dragging its
+icon off the tile. The view never assigns its own `workspace` or `appFilter`
+(that would cut the binding from `Desktop.qml` and reopen the overview on a stale
+workspace); it emits `workspacePicked` and the owner sets it.
+
 `diva.desktop map` returns the tiles as drawn and `diva.desktop drop <address> <x>
 <y> <tabs>` replays a drop at a point; both exist for checks. Adding an empty
 workspace keeps a placeholder for this service's lifetime; activation or moving a
@@ -218,3 +228,24 @@ wallpaper/install/update/uninstall tests. `tests/preview.sh` runs a separate
 Quickshell instance offscreen, checks the available non-layer-shell components compile, and renders control
 and overview fixtures. It does not exercise real radios, the live compositor,
 touchpad hardware, or live window capture; those need an interactive desktop test.
+
+### Priority fixes after the 6 October 2026 review
+
+- `diva-power`: cuts go on mildest first and come off in reverse, so the level-3
+  brightness cap is lifted before the level-2 dimming (which otherwise saw a
+  brightness it had not set and left it). `level_for` holds a level until the
+  reading clears its threshold by a margin. Checked by `tests/test_power.sh`
+  against stand-in commands.
+- `diva-run` reports `state`: `verified`, `launched` or `failed`. With nothing to
+  observe it waits briefly for the command's own exit code. `launch:<app id>`
+  only counts a window of that app. `Diva.qml` (`judge`) treats an unreadable
+  answer as undetermined, and queues an action asked for while another is being
+  checked (`waiting`) instead of running it detached.
+- `diva-doctor inspect [areas]` returns `problems`, `choices` and `elsewhere`;
+  `Smart.symptomAreas()` derives the areas from the request by keyword. The
+  troubleshooting skill tells the model to leave `choices` alone.
+- `DesktopModel` is driven by Hyprland's raw events (positions at most four
+  times a second, titles once a second) with a 5 s safety tick, instead of a
+  700 ms poll in each of its two instances. The screensaver runs its effects at
+  20 frames a second on battery.
+

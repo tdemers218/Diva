@@ -31,6 +31,15 @@ Item {
   readonly property bool onScreen: win.monitor === overview.monitorName && win.workspace === overview.homeWorkspace
 
   property bool dragging: false
+  // Dropped somewhere that changes the layout: the tile stays where it was
+  // let go, still small, until the new layout arrives, and then travels
+  // straight to its new place. It never goes back to its old one first.
+  property bool held: false
+  property string heldShape: ""
+  readonly property string shape: Math.round(tile.x) + ":" + Math.round(tile.y) + ":" + Math.round(tile.width) + ":" + Math.round(tile.height)
+  onShapeChanged: if (held && shape !== heldShape) settle()
+  function settle() { held = false; holding.stop(); dragX = 0; dragY = 0 }
+  Timer { id: holding; interval: 2200; onTriggered: card.settle() }
   property bool resizing: false
   property bool closing: false
   property real dragX: 0
@@ -68,7 +77,7 @@ Item {
   y: fromY + (restY - fromY) * p + dragY
   width: Math.max(12, fromW + (tw + grow - fromW) * p)
   height: Math.max(12, fromH + (th + growY - fromH) * p)
-  z: dragging ? 60 : resizing ? 50 : (tile.floating ? 30 : 10) + (hovered ? 2 : 0) + (selected ? 1 : 0)
+  z: dragging || held ? 60 : resizing ? 50 : (tile.floating ? 30 : 10) + (hovered ? 2 : 0) + (selected ? 1 : 0)
   visible: known
   opacity: (onScreen ? 1 : p) * appear * (closing ? 0 : 1)
   Behavior on opacity { enabled: card.lively && card.closing; NumberAnimation { duration: 180 } }
@@ -81,7 +90,7 @@ Item {
     },
     Rotation { origin.x: card.pressX; origin.y: card.pressY; angle: card.tilt }
   ]
-  property real lift: (closing ? 0.7 : dragging ? Math.min(0.78, 300 / Math.max(1, width)) : hovered && !resizing ? 1.015 : 1) * (0.95 + 0.05 * appear)
+  property real lift: (closing ? 0.7 : dragging || held ? Math.min(0.78, 300 / Math.max(1, width)) : hovered && !resizing ? 1.015 : 1) * (0.95 + 0.05 * appear)
   Behavior on lift { enabled: card.lively; NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
   Behavior on tilt { enabled: card.lively; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
   Behavior on dragX { enabled: card.lively && !card.dragging; NumberAnimation { duration: overview.pace; easing.type: Easing.OutCubic } }
@@ -91,7 +100,7 @@ Item {
   // with the slide, a beat apart, without overshooting into each other.
   SequentialAnimation {
     id: arrive
-    PauseAnimation { duration: Math.min(card.index, 6) * 22 }
+    PauseAnimation { duration: Math.max(0, Math.min(card.index, 6)) * 22 }
     NumberAnimation { target: card; property: "appear"; from: 0; to: 1; duration: 200; easing.type: Easing.OutCubic }
   }
   Component.onCompleted: if (lively && overview.active && overview.settled) { appear = 0; arrive.start() }
@@ -125,7 +134,7 @@ Item {
     radius: 16 * card.p
     color: "#362230"
     border.width: 2
-    border.color: card.dragging || card.resizing ? "#ffd0e2" : card.hovered || card.selected ? "#eaa3c0" : tile.floating ? "#8a6a80" : "#65445a"
+    border.color: card.dragging || card.held || card.resizing ? "#ffd0e2" : card.hovered || card.selected ? "#eaa3c0" : tile.floating ? "#8a6a80" : "#65445a"
     Behavior on border.color { ColorAnimation { duration: card.lively ? 140 : 0 } }
 
     ClippingRectangle {
@@ -206,8 +215,8 @@ Item {
     onReleased: {
       if (!card.dragging) { overview.activated(card.address); return }
       card.dragging = false; card.tilt = 0
-      overview.dragEnded(card.address)
-      card.dragX = 0; card.dragY = 0
+      if (overview.dragEnded(card.address)) { card.heldShape = card.shape; card.held = true; holding.restart() }
+      else { card.dragX = 0; card.dragY = 0 }
     }
     onCanceled: {
       if (card.dragging) { card.dragging = false; overview.dragCancelled() }
@@ -228,7 +237,9 @@ Item {
         width: 28; height: 28; radius: 10
         color: tabArea.containsMouse ? "#eaa3c0" : current ? "#8a5673" : Qt.rgba(0.13, 0.07, 0.12, 0.88)
         border.width: 1; border.color: Qt.rgba(1, 1, 1, current ? 0.4 : 0.16)
-        scale: tabArea.containsMouse ? 1.12 : 1
+        scale: tabArea.pulled ? 1.25 : tabArea.containsMouse ? 1.12 : 1
+        z: tabArea.pulled ? 5 : 0
+        transform: Translate { x: tabArea.pulled ? tabArea.dx : 0; y: tabArea.pulled ? tabArea.dy : 0 }
         Behavior on scale { enabled: card.lively; SpringAnimation { spring: 5; damping: 0.36 } }
         Image {
           anchors.centerIn: parent; width: 18; height: 18; sourceSize.width: 36; sourceSize.height: 36
@@ -237,9 +248,30 @@ Item {
         MouseArea {
           id: tabArea
           anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-          onEntered: overview.hint = "Onglet : " + tab.modelData.title
-          onExited: overview.hint = ""
-          onClicked: overview.activated(tab.modelData.address)
+          preventStealing: true
+          // Pulled out of the tile, the tab leaves the group.
+          property bool pulled: false
+          property real startX: 0
+          property real startY: 0
+          property real dx: 0
+          property real dy: 0
+          onEntered: overview.hint = "Onglet : " + tab.modelData.title + "  ·  tire-le dehors pour le sortir"
+          onExited: if (!pressed) overview.hint = ""
+          onPressed: function(mouse) { var at = mapToItem(overview, mouse.x, mouse.y); startX = at.x; startY = at.y; dx = 0; dy = 0; pulled = false }
+          onPositionChanged: function(mouse) {
+            if (!pressed) return
+            var at = mapToItem(overview, mouse.x, mouse.y)
+            dx = at.x - startX; dy = at.y - startY
+            if (!pulled && Math.abs(dx) + Math.abs(dy) > 14) pulled = true
+            if (pulled) overview.hint = "Lâche-le hors de la fenêtre : il sort des onglets"
+          }
+          onReleased: function(mouse) {
+            var was = pulled, at = mapToItem(card, mouse.x, mouse.y)
+            pulled = false; overview.hint = ""
+            if (!was) overview.activated(tab.modelData.address)
+            else if (at.x < 0 || at.y < 0 || at.x > card.width || at.y > card.height) overview.ungrouped(tab.modelData.address)
+          }
+          onCanceled: { pulled = false; overview.hint = "" }
         }
       }
     }

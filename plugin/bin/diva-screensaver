@@ -248,10 +248,20 @@ effect() {
   esac
 }
 
+# Sixty frames a second when plugged in; on battery a third of that, which
+# the effects still read well at and costs far fewer wake-ups.
+frame_rate() {
+  if [[ $(busctl get-property org.freedesktop.UPower /org/freedesktop/UPower org.freedesktop.UPower OnBattery 2>/dev/null) == "b true" ]]; then
+    echo 20
+  else
+    echo 60
+  fi
+}
+
 run_effect() {
   # shellcheck disable=SC2046
   ttfx -i "$STAGE" --terminal-background-color 170f17 \
-    --frame-rate 60 --canvas-width 0 --canvas-height 0 --anchor-canvas c --anchor-text c \
+    --frame-rate "$(frame_rate)" --canvas-width 0 --canvas-height 0 --anchor-canvas c --anchor-text c \
     --no-eol --no-restore-cursor $(effect) &
   while pgrep -t "${tty#/dev/}" -x ttfx >/dev/null; do
     if read -rsn1 -t 1 || ! screensaver_in_focus; then exit_screensaver; fi

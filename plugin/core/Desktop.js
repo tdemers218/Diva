@@ -168,6 +168,25 @@ function joinKind(plan, source, target) {
   return !s ? "pair" : s.count < 4 ? "quarter" : "beside"
 }
 
+// What a window can be pulled out of: "tabs", a shared "screen", a plain
+// "stack", or "" when it already has a place of its own. With it, the
+// rectangle (map coordinates) the pointer has to leave for that to happen.
+function leaveKind(plan, address) {
+  var t = plan.tiles.find(function(o) { return o.address === address })
+  if (!t || t.floating) return null
+  var own = { x: t.x, y: t.y, width: t.width, height: t.height }
+  if (t.members.length > 1) return { kind: "tabs", rect: own }
+  var s = screens(plan, "").find(function(g) { return g.first === t.column || g.second === t.column })
+  if (s) return { kind: "screen", rect: { x: s.x, y: s.y, width: s.width, height: s.height } }
+  if (t.stacked) {
+    var column = plan.tiles.filter(function(o) { return !o.floating && o.column === t.column })
+    var top = Math.min.apply(null, column.map(function(o) { return o.y }))
+    var bottom = Math.max.apply(null, column.map(function(o) { return o.y + o.height }))
+    return { kind: "stack", rect: { x: t.x, y: top, width: t.width, height: bottom - top } }
+  }
+  return null
+}
+
 // What dropping a window at (x, y) on a tile of that size does: the sides
 // place it before or after, the bottom stacks it underneath, the middle
 // joins it ("group": a shared screen, or tabs when asked). Floating windows

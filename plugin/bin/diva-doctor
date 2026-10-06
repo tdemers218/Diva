@@ -5,7 +5,9 @@
 # to a journal, and is undone when that is possible. Prints one JSON line.
 #
 #   diva-doctor list             the repairs she may apply
-#   diva-doctor inspect          the state of the things that usually break
+#   diva-doctor inspect [areas]  the state of the things that usually break;
+#                                areas (sound,network,bluetooth,diva) say what
+#                                the complaint is about
 #   diva-doctor repair <id>      apply one repair
 #   diva-doctor verify <id>      did that repair's problem go away?
 #   diva-doctor undo             revert the last repair that can be reverted
@@ -38,14 +40,27 @@ REPAIRS='[
 ]'
 
 say() { jq -nc "$@"; exit 0; }
-state() { "$here/diva-state" 2>/dev/null; }
+# DIVA_STATE_FAKE='{"muted":true,"wifi":true,…}' stands in for the machine, for checks.
+state() { if [[ -n ${DIVA_STATE_FAKE:-} ]]; then echo "$DIVA_STATE_FAKE"; else "$here/diva-state" 2>/dev/null; fi; }
 known() { jq -e --arg id "$1" 'any(.[]; .id == $id)' <<<"$REPAIRS" >/dev/null; }
 journal() { jq -nc --arg at "$(date -Is)" --arg repair "$1" --arg undo "$2" --arg note "$3" \
   '{at: $at, repair: $repair, undo: $undo, note: $note}' >>"$JOURNAL"; }
 valid_json() { [[ ! -e $1 ]] || jq -e . "$1" >/dev/null 2>&1; }
 
+# Some states are faults whatever the complaint: a sound service that is down,
+# a full disk. Others are usually someone's choice: the sound muted, the Wi-Fi
+# or the Bluetooth switched off, by her or by Diva's own battery care. Those
+# count as the problem only when the complaint is about that very thing
+# ("je n'ai plus de son" with the sound muted). So the answer has three lists:
+#   problems    what to act on: faults in the areas complained about (or all
+#               faults when no area is given), and choices in those areas
+#   elsewhere   faults in other areas: worth a mention, not a repair
+#   choices     switched-off things left alone, with who switched them off
 inspect() {
-  local s connectivity audio shell plugin
+  local s connectivity audio shell plugin areas="${1:-}" saver=false
+  [[ $areas =~ ^[a-z,]*$ ]] || areas=""
+  # Bluetooth switched off by the battery policy, not by a fault.
+  [[ -n $(jq -r '.cuts.bluetooth // empty' "$STATE_DIR/power.json" 2>/dev/null) ]] && saver=true
   s=$(state)
   [[ -n $s ]] || s='{}'
   connectivity=$(nmcli -t -f CONNECTIVITY general 2>/dev/null || echo unknown)
@@ -60,7 +75,8 @@ inspect() {
     --argjson learned "$(valid_json "$LEARNED" && echo true || echo false)" \
     --arg sink "$(omarchy-audio-output-sink 2>/dev/null || true)" \
     --arg disk "$(df --output=pcent "$HOME" 2>/dev/null | tail -n1 | tr -dc '0-9')" \
-    --arg bluetoothService "$(systemctl is-active bluetooth 2>/dev/null || true)" '
+    --arg bluetoothService "$(systemctl is-active bluetooth 2>/dev/null || true)" \
+    --arg areas "$areas" --argjson saver "$saver" '
     {ok: true,
      sound: {servicesRunning: $audio, output: $sink, volume: ($s.volume // -1), muted: ($s.muted // false)},
      network: {wifiOn: ($s.wifi // false), network: ($s.network // ""), internet: $connectivity},
@@ -69,21 +85,29 @@ inspect() {
      battery: {percent: ($s.battery // -1), charging: ($s.charging // false)},
      disk: {usedPercent: ($disk | tonumber? // -1)},
      diva: {shellAnswers: $shell, pluginEnabled: $plugin, settingsReadable: $config, shortcutsReadable: $learned}}
-    | . + {problems: ([
-        (if .sound.servicesRunning | not then "le système de son ne tourne pas" else empty end),
-        (if .sound.output == "" then "aucune sortie de son" else empty end),
-        (if .sound.muted then "le son est coupé" else empty end),
-        (if .sound.volume >= 0 and .sound.volume < 10 and (.sound.muted | not) then "le volume est presque à zéro" else empty end),
-        (if .network.wifiOn | not then "le Wi-Fi est éteint" else empty end),
-        (if .network.wifiOn and .network.network == "" then "le Wi-Fi est allumé mais connecté à aucun réseau" else empty end),
-        (if .network.network != "" and .network.internet != "full" then "connectée au réseau mais Internet ne répond pas (" + .network.internet + ")" else empty end),
-        (if .bluetooth.on | not then "le Bluetooth est éteint" else empty end),
-        (if .disk.usedPercent >= 95 then "le disque est presque plein" else empty end),
-        (if .diva.shellAnswers | not then "la barre et les menus ne répondent pas" else empty end),
-        (if .diva.pluginEnabled | not then "Diva n'\''est pas activée dans Omarchy" else empty end),
-        (if .diva.settingsReadable | not then "le fichier de réglages de Diva est illisible" else empty end),
-        (if .diva.shortcutsReadable | not then "le fichier des raccourcis appris est illisible" else empty end)
-      ])}'
+    | ($areas | split(",") | map(select(. != ""))) as $asked
+    | ([
+        (if .sound.servicesRunning | not then {area: "sound", fault: true, text: "le système de son ne tourne pas"} else empty end),
+        (if .sound.output == "" then {area: "sound", fault: true, text: "aucune sortie de son"} else empty end),
+        (if .sound.muted then {area: "sound", fault: false, text: "le son est coupé"} else empty end),
+        (if .sound.volume >= 0 and .sound.volume < 10 and (.sound.muted | not) then {area: "sound", fault: false, text: "le volume est presque à zéro"} else empty end),
+        (if .network.wifiOn | not then {area: "network", fault: false, text: "le Wi-Fi est éteint"} else empty end),
+        (if .network.wifiOn and .network.network == "" then {area: "network", fault: true, text: "le Wi-Fi est allumé mais connecté à aucun réseau"} else empty end),
+        (if .network.network != "" and .network.internet != "full" then {area: "network", fault: true, text: ("connectée au réseau mais Internet ne répond pas (" + .network.internet + ")")} else empty end),
+        (if .bluetooth.on | not then {area: "bluetooth", fault: false,
+           text: (if $saver then "le Bluetooth est éteint (par l'\''économie de batterie de Diva)" else "le Bluetooth est éteint" end)} else empty end),
+        (if .disk.usedPercent >= 95 then {area: "disk", fault: true, text: "le disque est presque plein"} else empty end),
+        (if .diva.shellAnswers | not then {area: "diva", fault: true, text: "la barre et les menus ne répondent pas"} else empty end),
+        (if .diva.pluginEnabled | not then {area: "diva", fault: true, text: "Diva n'\''est pas activée dans Omarchy"} else empty end),
+        (if .diva.settingsReadable | not then {area: "diva", fault: true, text: "le fichier de réglages de Diva est illisible"} else empty end),
+        (if .diva.shortcutsReadable | not then {area: "diva", fault: true, text: "le fichier des raccourcis appris est illisible"} else empty end)
+      ]) as $found
+    | . + {
+        asked: $asked,
+        problems: [$found[] | select(if ($asked | length) == 0 then .fault else (.area as $a | $asked | index($a)) != null end) | .text],
+        elsewhere: [$found[] | select(.fault and ($asked | length) > 0 and ((.area as $a | $asked | index($a)) == null)) | .text],
+        choices: [$found[] | select((.fault | not) and ((.area as $a | $asked | index($a)) == null)) | .text]
+      }'
 }
 
 # What must be true for a repair to have worked.
@@ -258,7 +282,7 @@ report() {
 
 case "${1:-}" in
 list) jq -c . <<<"$REPAIRS" ;;
-inspect) inspect ;;
+inspect) inspect "${2:-}" ;;
 repair) repair "${2:-}" ;;
 verify)
   known "${2:-}" || say '{ok: false, error: "unknown"}'

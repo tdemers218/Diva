@@ -6,16 +6,23 @@
 #
 #   diva-run <check> -- <argv...>
 #
-#   none                    nothing observable to check
+#   none                    nothing to observe: only the command's own exit
 #   launch                  a window appeared, or another one took the focus
+#   launch:<app id>         a window of that app appeared or took the focus;
+#                           other windows coming and going do not count
 #   focus:<0xaddress>       that window is now the active one
 #   closed                  the window that was active is gone
 #   float | fullscreen      that property of the active window changed
 #   state:<field>:<want>    bin/diva-state's field moved: up, down, toggle, or =N
 #
-# Prints {"ok":bool,"verified":bool,"detail":"…"}. `verified` is false when
-# nothing could be observed either way; `ok` is false only on real evidence
-# of failure.
+# Prints {"ok":bool,"verified":bool,"state":"…","detail":"…"}. `state` is the
+# one to read:
+#   verified   the effect was observed
+#   launched   the command ran (or is still running) and nothing says it
+#              failed, but its effect could not be observed
+#   failed     the effect did not happen, or the command exited with an error
+# `ok` is false only for "failed" and `verified` true only when something was
+# observed, either way.
 
 set -uo pipefail
 
@@ -23,9 +30,36 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 check="${1:-none}"
 shift || true
 [[ ${1:-} == -- ]] && shift
-(( $# > 0 )) || { echo '{"ok":false,"verified":true,"detail":"nothing to run"}'; exit 0; }
+(( $# > 0 )) || { echo '{"ok":false,"verified":true,"state":"failed","detail":"nothing to run"}'; exit 0; }
 
-report() { jq -nc --argjson ok "$1" --argjson verified "$2" --arg detail "$3" '{ok: $ok, verified: $verified, detail: $detail}'; exit 0; }
+report() {
+  jq -nc --argjson ok "$1" --argjson verified "$2" --arg detail "$3" \
+    '{ok: $ok, verified: $verified, state: (if $ok | not then "failed" elif $verified then "verified" else "launched" end), detail: $detail}'
+  exit 0
+}
+# The command's own verdict, when it gives one in time: sets `code` to its
+# exit code once it has finished, and leaves it empty while it still runs.
+# (Not a subshell: only the shell that started the command can wait for it.)
+exit_code() {
+  local tries="$1" i
+  code=""
+  for (( i = 0; i < tries; i++ )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid"
+      code=$?
+      return
+    fi
+    sleep 0.1
+  done
+}
+# Nothing could be observed: fall back on what the command itself says.
+unobserved() {
+  exit_code "${2:-1}"
+  [[ -z $code ]] && report true false "$1; still running"
+  (( code == 0 )) || report false true "the command failed (exit $code)"
+  report true false "$1"
+}
+
 clients() { hyprctl clients -j 2>/dev/null | jq -c '[.[] | select(.mapped) | .address] | sort' 2>/dev/null; }
 active() { hyprctl activewindow -j 2>/dev/null | jq -r "${1:-.address} // \"\"" 2>/dev/null; }
 field() { "$here/diva-state" 2>/dev/null | jq -r --arg f "$1" '.[$f]' 2>/dev/null; }
@@ -58,16 +92,41 @@ esac
 pid=$!
 
 case "$check" in
+launch:*)
+  # Hyprland's window class is the app id, or its last dotted part.
+  hint=$(tr '[:upper:]' '[:lower:]' <<<"${check#launch:}")
+  hint=${hint%.desktop}
+  # of_app <jq condition on a window>: is there such a window of this app?
+  of_app() {
+    hyprctl clients -j 2>/dev/null | jq -e --argjson before "${before_clients:-[]}" --arg was "$before_active" --arg now "$(active)" \
+      --arg h "$hint" --arg t "${hint##*.}" '
+      def key: (. // "") | ascii_downcase | sub("\\.desktop$"; "");
+      def ours: (.class | key) as $c | (.initialClass | key) as $i
+        | $c == $h or $i == $h or ($c | split(".") | last) == $t or ($i | split(".") | last) == $t;
+      any(.[]; select(.mapped and ours) | '"$1"')' >/dev/null 2>&1
+  }
+  arrived() { of_app '(.address as $a | $before | index($a) | not) or (.address == $now and $now != $was)'; }
+  # A new window that took the focus but is not recognised as this app (a web
+  # app, or a program whose window is named differently): very likely it, but
+  # not proof. Stop waiting once it has been there a moment, so the next
+  # action is not kept in the queue for the full eight seconds.
+  other() { [[ $(active) != "$before_active" ]] && ! jq -e --arg a "$(active)" 'index($a) != null' <<<"${before_clients:-[]}" >/dev/null 2>&1; }
+  for (( i = 0, seen = 0; i < 32; i++ )); do
+    arrived && report true true "a window of the app appeared"
+    if other; then (( ++seen >= 3 )) && report true false "a new window took the focus, not recognised as this app"; else seen=0; fi
+    sleep 0.25
+  done
+  exit_code 1
+  [[ -n $code ]] && (( code != 0 )) && report false true "the command failed (exit $code)"
+  # Nothing new: it may simply have been in front already.
+  of_app '.address == $now' && report true true "the app is in front"
+  report true false "no window of the app seen"
+  ;;
 launch)
   changed() { [[ $(clients) != "$before_clients" || $(active) != "$before_active" ]]; }
   poll 32 changed && report true true "a window appeared"
   # Nothing visibly changed: a failure only if the launcher itself failed.
-  if ! kill -0 "$pid" 2>/dev/null; then
-    wait "$pid"
-    code=$?
-    (( code == 0 )) || report false true "the command failed (exit $code)"
-  fi
-  report true false "no change seen"
+  unobserved "no change seen"
   ;;
 focus:*)
   at() { [[ $(active) == "${check#focus:}" ]]; }
@@ -76,7 +135,7 @@ focus:*)
   ;;
 closed)
   gone() { ! clients | jq -e --arg a "$before_active" 'index($a) != null' >/dev/null 2>&1; }
-  [[ -n $before_active ]] || report true false "no window was active"
+  [[ -n $before_active ]] || unobserved "no window was active"
   poll 12 gone && report true true "closed"
   report false true "the window is still open"
   ;;
@@ -97,11 +156,12 @@ state:*)
     *) return 1 ;;
     esac
   }
-  [[ $before_value =~ ^-?[0-9]+$ || $before_value == true || $before_value == false ]] || report true false "no reading for $name"
+  [[ $before_value =~ ^-?[0-9]+$ || $before_value == true || $before_value == false ]] || unobserved "no reading for $name" 15
   poll 10 reached && report true true "$name is now $(field "$name")"
   report false true "$name stayed at $(field "$name")"
   ;;
 *)
-  report true false "not checked"
+  # No effect to look for: give the command a moment to fail on its own.
+  unobserved "not checked" 15
   ;;
 esac

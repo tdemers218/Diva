@@ -500,6 +500,14 @@ TestCase {
     compare(Smart.argv(tile, {}, dirs, ""), null)
   }
 
+  function test_complaints_name_what_they_are_about() {
+    compare(Smart.symptomAreas("Je n'ai plus de son"), "sound")
+    compare(Smart.symptomAreas("Internet ne marche pas"), "network")
+    compare(Smart.symptomAreas("Mes écouteurs ne se connectent pas"), "sound,bluetooth")
+    compare(Smart.symptomAreas("La barre a disparu"), "diva")
+    compare(Smart.symptomAreas("Personne ne répond à la maison"), "")
+    compare(Smart.symptomAreas("L'ordinateur est lent"), "")
+  }
   function test_every_action_names_its_check() {
     compare(Smart.check(Actions.tile(Actions.byId("volume-up"), 0)), "state:volume:up")
     compare(Smart.check(Actions.tile(Actions.byId("mute"), 0)), "state:muted:toggle")
@@ -507,7 +515,10 @@ TestCase {
     compare(Smart.check(Actions.tile(Actions.byId("lock"), 0)), "none")
     compare(Smart.check(Smart.levelTile("volume", 40)), "state:volume:=40")
     compare(Smart.check(Smart.levelTile("brightness", 0)), "state:brightness:=1")
-    compare(Smart.check({ kind: "app", id: "spotify" }), "launch")
+    compare(Smart.check({ kind: "app", id: "spotify" }), "launch:spotify")
+    compare(Smart.check({ kind: "app", id: "org.gnome.Nautilus" }), "launch:org.gnome.Nautilus")
+    compare(Smart.check({ kind: "app", id: "x; rm" }), "launch")
+    compare(Smart.check({ kind: "url", url: "https://example.org" }), "launch")
     compare(Smart.check({ kind: "window", id: "0x55bd67b53500" }), "focus:0x55bd67b53500")
     compare(Smart.check({ kind: "window", id: "0x1; id" }), "none")
     compare(Smart.check({ kind: "winact", id: "close" }), "closed")
